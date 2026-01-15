@@ -4,12 +4,29 @@ A browser-based reverse engineering platform that runs Rizin entirely in your br
 
 ## Screenshots
 
-<!-- Add your screenshots here -->
-![Homepage](screenshots/homepage.png)
+**Homepage** - Drop a binary and start analyzing
 
-![Analysis View](screenshots/analysis.png)
+![Homepage](public/Homepage.png)
 
-![Graph View](screenshots/graph.png)
+**Terminal** - Full Rizin CLI access
+
+![Terminal](public/Terminal.png)
+
+**Disassembly** - Syntax-highlighted assembly view
+
+![Disassembly](public/Disassembly.png)
+
+**Control Flow Graph** - Visual function structure
+
+![Graph](public/Graph.png)
+
+**Hex Dump** - Raw byte inspection
+
+![Hex Dump](public/HexDump.png)
+
+**Strings** - Extracted strings from the binary
+
+![Strings](public/Strings.png)
 
 ## What It Does
 
