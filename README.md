@@ -43,22 +43,6 @@ Cache the WASM module for offline use. Analyze binaries without internet.
 2. Drop any binary file
 3. Click **Analyze**
 
-## Terminal Commands
-
-Full Rizin command set available:
-
-```
-afl          - List functions
-pdf          - Disassemble function
-s <addr>     - Seek to address
-px 64        - Hex dump
-iz           - List strings
-ii           - List imports
-axt <addr>   - Cross-references to
-axf <addr>   - Cross-references from
-w <bytes>    - Write bytes (patch)
-wtf file     - Export to file
-```
 
 ## Architecture
 

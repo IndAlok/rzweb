@@ -1,15 +1,4 @@
-export const RIZIN_VERSIONS = [
-  { value: '0.9.0', label: 'Rizin 0.9.0', latest: true },
-  { value: '0.8.0', label: 'Rizin 0.8.0', latest: false },
-  { value: '0.7.3', label: 'Rizin 0.7.3', latest: false },
-  { value: '0.7.2', label: 'Rizin 0.7.2', latest: false },
-  { value: '0.7.1', label: 'Rizin 0.7.1', latest: false },
-  { value: '0.7.0', label: 'Rizin 0.7.0', latest: false },
-] as const;
-
-export const DEFAULT_VERSION = '0.9.0';
-
-export const GITHUB_RELEASES_URL = 'https://github.com/rizinorg/rizin/releases/download';
+export const RIZIN_VERSION = '0.7.3';
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
@@ -61,24 +50,3 @@ export const TERMINAL_THEMES = {
     brightWhite: '#ffffff',
   },
 } as const;
-
-export const ANALYSIS_COMMANDS = [
-  { command: 'aaa', label: 'Full Analysis', description: 'Run all analysis steps' },
-  { command: 'aa', label: 'Basic Analysis', description: 'Analyze functions' },
-  { command: 'aac', label: 'Analyze Calls', description: 'Analyze function calls' },
-  { command: 'aar', label: 'Analyze Refs', description: 'Analyze references' },
-  { command: 'aas', label: 'Analyze Symbols', description: 'Analyze symbols' },
-  { command: 'af', label: 'Analyze Function', description: 'Analyze current function' },
-] as const;
-
-export const COMMON_COMMANDS = [
-  { command: 'pdf', label: 'Print Disassembly', description: 'Print disassembly of function' },
-  { command: 'px', label: 'Print Hex', description: 'Print hexdump' },
-  { command: 'ps', label: 'Print String', description: 'Print string' },
-  { command: 'afl', label: 'List Functions', description: 'List all functions' },
-  { command: 'is', label: 'List Symbols', description: 'List symbols' },
-  { command: 'iz', label: 'List Strings', description: 'List strings' },
-  { command: 'iS', label: 'List Sections', description: 'List sections' },
-  { command: 'ii', label: 'List Imports', description: 'List imports' },
-  { command: 'iE', label: 'List Exports', description: 'List exports' },
-] as const;

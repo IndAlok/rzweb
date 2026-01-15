@@ -33,7 +33,7 @@ export default function HomePage() {
         size: file.size,
         loadedAt: Date.now(),
       });
-      navigate(`/analyze?version=0.9.0&cache=${cacheVersions}`);
+      navigate(`/analyze?cache=${cacheVersions}`);
     } catch {
       // File processing error
     } finally {
@@ -47,7 +47,7 @@ export default function HomePage() {
         <div className="flex items-center gap-3">
           <Terminal className="h-5 w-5 text-primary" />
           <span className="font-mono font-bold text-primary">RzWeb</span>
-          <span className="text-[10px] text-muted-foreground font-mono">v0.9.0</span>
+          <span className="text-[10px] text-muted-foreground font-mono">v0.7.3</span>
         </div>
         <div className="flex items-center gap-1">
           <Button
