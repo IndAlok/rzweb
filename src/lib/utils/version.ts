@@ -1,29 +1,55 @@
 let cachedVersion: string | null = null;
+let fetching: Promise<string> | null = null;
 
-export async function getRizinVersion(): Promise<string> {
-  if (cachedVersion) return cachedVersion;
-  
+async function fetchVersion(): Promise<string> {
   const envVersion = (import.meta as unknown as { env?: { VITE_RIZIN_VERSION?: string } }).env?.VITE_RIZIN_VERSION;
-  if (envVersion) {
-    cachedVersion = envVersion;
-    return cachedVersion;
+  if (envVersion && envVersion !== 'undefined' && envVersion.trim()) {
+    return envVersion.trim();
   }
   
   try {
     const response = await fetch('/VERSION');
     if (response.ok) {
-      cachedVersion = (await response.text()).trim();
-      return cachedVersion;
+      const text = await response.text();
+      const version = text.trim();
+      if (version && version !== 'undefined') {
+        return version;
+      }
     }
   } catch {
-    // Fallback if VERSION file not available
+    // Local VERSION not available
   }
   
-  cachedVersion = '0.8.1';
-  return cachedVersion;
+  try {
+    const response = await fetch('https://indalok.github.io/rzwasi/VERSION');
+    if (response.ok) {
+      const text = await response.text();
+      const version = text.trim();
+      if (version && version !== 'undefined') {
+        return version;
+      }
+    }
+  } catch {
+    // Remote VERSION not available
+  }
+  
+  return 'unknown';
+}
+
+export async function getRizinVersion(): Promise<string> {
+  if (cachedVersion) return cachedVersion;
+  
+  if (!fetching) {
+    fetching = fetchVersion().then(v => {
+      cachedVersion = v;
+      fetching = null;
+      return v;
+    });
+  }
+  
+  return fetching;
 }
 
 export function getRizinVersionSync(): string {
-  const envVersion = (import.meta as unknown as { env?: { VITE_RIZIN_VERSION?: string } }).env?.VITE_RIZIN_VERSION;
-  return cachedVersion || envVersion || '0.8.1';
+  return cachedVersion || '...';
 }
