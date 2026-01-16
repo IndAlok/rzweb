@@ -1,5 +1,3 @@
-export const RIZIN_VERSION = '0.7.3';
-
 export const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 export const TERMINAL_THEMES = {

@@ -3,20 +3,20 @@ set -e
 
 echo "=== RzWeb Build Script ==="
 
-# Download rizin.js from GitHub Pages to bundle locally
-# This avoids COEP cross-origin script blocking issues
-# The rizin.wasm (30MB) will be loaded from GitHub Pages at runtime
 echo "Downloading rizin.js..."
 curl -fL "https://indalok.github.io/rzwasi/rizin.js" -o public/rizin.js
 echo "Downloaded rizin.js to public/"
 
-# Install dependencies
+echo "Fetching Rizin version..."
+RIZIN_VERSION=$(curl -fsSL "https://indalok.github.io/rzwasi/VERSION" 2>/dev/null || echo "0.8.1")
+echo "Rizin version: $RIZIN_VERSION"
+echo "$RIZIN_VERSION" > public/VERSION
+
 echo "Installing dependencies..."
 npm ci
 
-# Build the project
 echo "Building..."
-npm run build
+VITE_RIZIN_VERSION="$RIZIN_VERSION" npm run build
 
 echo "=== Build Complete ==="
 ls -la dist/

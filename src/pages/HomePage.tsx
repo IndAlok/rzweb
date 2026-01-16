@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFileStore, useSettingsStore } from '@/stores';
 import { Button } from '@/components/ui';
 import { FileDropZone } from '@/components/file';
 import { formatSize } from '@/lib/utils/format';
+import { getRizinVersion } from '@/lib/utils/version';
 import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2 } from 'lucide-react';
 import { useTheme } from '@/providers';
 
@@ -15,6 +16,11 @@ export default function HomePage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [rizinVersion, setRizinVersion] = useState('0.8.1');
+
+  useEffect(() => {
+    getRizinVersion().then(setRizinVersion);
+  }, []);
 
   const handleFileSelect = useCallback((f: File) => {
     setFile(f);
@@ -47,7 +53,7 @@ export default function HomePage() {
         <div className="flex items-center gap-3">
           <Terminal className="h-5 w-5 text-primary" />
           <span className="font-mono font-bold text-primary">RzWeb</span>
-          <span className="text-[10px] text-muted-foreground font-mono">v0.7.3</span>
+          <span className="text-[10px] text-muted-foreground font-mono">v{rizinVersion}</span>
         </div>
         <div className="flex items-center gap-1">
           <Button
