@@ -15,7 +15,7 @@ import type { RzFunction, RzDisasmLine, RzString } from '@/types/rizin';
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const version = searchParams.get('version') || '0.7.3';
+  const version = searchParams.get('version') || '0.8.1';
   const shouldCache = searchParams.get('cache') === 'true';
 
   const { currentFile, clearCurrentFile } = useFileStore();
