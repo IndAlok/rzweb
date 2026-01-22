@@ -98,4 +98,4 @@ The frontend is React with TypeScript and Tailwind CSS. State management uses Zu
 
 Built by [IndAlok](https://github.com/IndAlok)
 
-Powered by [Rizin](https://rizin.re), the open-source reverse engineering framework.
+Powered by [Rizin](https://rizin.re), the open-source reverse engineering framework. 
