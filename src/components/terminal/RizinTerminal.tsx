@@ -82,6 +82,9 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
             // Skip repetitive warnings but keep ERROR messages and command help
             if (trimmed.includes('Neither hash nor gnu_hash')) return false;
             if (trimmed.includes('rz_config_node_desc: assertion')) return false;
+            if (trimmed.includes('rz_config_set:')) return false;
+            if (trimmed.includes('rz_config_get:')) return false;
+            if (trimmed.includes('variable') && trimmed.includes('not found')) return false;
             return true;
           });
           stderrLines.forEach(line => {

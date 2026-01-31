@@ -107,8 +107,6 @@ export class RizinInstance {
       '-e', 'scr.utf8=false',
       '-e', 'scr.utf8.curvy=false',
       '-e', 'log.level=0',
-      '-e', 'dbg.verbose=false',
-      '-e', 'analysis.verbose=false',
       '-e', 'scr.pager=',
       '-q',
       '-c', command,
@@ -180,22 +178,26 @@ export class RizinInstance {
         this.runCommand(`e io.cache=${config.ioCache}`, this.filePath);
       }
 
+      // Always run analysis to populate functions
+      // Use lighter analysis for large files to avoid UI freezing
       const AUTO_ANALYZE_THRESHOLD = 1024 * 1024;
-      const shouldAutoAnalyze = file.data.length < AUTO_ANALYZE_THRESHOLD;
+      const isLargeFile = file.data.length >= AUTO_ANALYZE_THRESHOLD;
       
-      if (shouldAutoAnalyze) {
-        const depth = config?.analysisDepth || 1;
-        const analysisCmd = depth >= 3 ? 'aaaa' : (depth >= 2 ? 'aaa' : 'aa');
-        await this.yield();
-        const analysisOutput = this.runCommand(`${analysisCmd};aflj`, this.filePath);
-        
+      await this.yield();
+      
+      if (isLargeFile) {
+        // For large files, use 'aF' (analyze functions from symbols) which is fast
+        const analysisOutput = this.runCommand('aF;aflj', this.filePath);
         const functions = this.parseJSON(analysisOutput);
         if (Array.isArray(functions)) {
           this.analysisData.functions = functions;
         }
       } else {
-        const quickOutput = this.runCommand('aflj', this.filePath);
-        const functions = this.parseJSON(quickOutput);
+        // For small files, run full analysis
+        const depth = config?.analysisDepth || 1;
+        const analysisCmd = depth >= 3 ? 'aaaa' : (depth >= 2 ? 'aaa' : 'aa');
+        const analysisOutput = this.runCommand(`${analysisCmd};aflj`, this.filePath);
+        const functions = this.parseJSON(analysisOutput);
         if (Array.isArray(functions)) {
           this.analysisData.functions = functions;
         }
