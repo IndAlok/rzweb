@@ -122,6 +122,48 @@ export class RizinInstance {
     return this.stdoutBuffer.join('\n');
   }
 
+  private sanitizeJSON(jsonStr: string): string {
+    // Escape control characters (0x00-0x1F) inside JSON strings
+    // These break JSON.parse but rizin sometimes outputs them
+    let result = '';
+    let inString = false;
+    let escape = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      const code = jsonStr.charCodeAt(i);
+      
+      if (escape) {
+        result += char;
+        escape = false;
+        continue;
+      }
+      
+      if (char === '\\' && inString) {
+        result += char;
+        escape = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inString = !inString;
+        result += char;
+        continue;
+      }
+      
+      // If we're in a string and hit a control character, escape it
+      if (inString && code >= 0 && code <= 0x1F) {
+        // Convert to \uXXXX format
+        result += '\\u' + code.toString(16).padStart(4, '0');
+        continue;
+      }
+      
+      result += char;
+    }
+    
+    return result;
+  }
+
   private parseJSON(text: string): unknown[] | unknown | null {
     const trimmed = text.trim();
     if (!trimmed) return null;
@@ -155,11 +197,20 @@ export class RizinInstance {
         if (depth === 0) {
           const jsonStr = trimmed.substring(arrayStart, i + 1);
           try {
+            // First try direct parse
             const parsed = JSON.parse(jsonStr);
             console.log('[RizinInstance:parseJSON] Parsed array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
             return parsed;
-          } catch (e) {
-            console.log('[RizinInstance:parseJSON] Failed to parse extracted JSON:', e);
+          } catch {
+            // Try with sanitization for control characters
+            try {
+              const sanitized = this.sanitizeJSON(jsonStr);
+              const parsed = JSON.parse(sanitized);
+              console.log('[RizinInstance:parseJSON] Parsed sanitized array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
+              return parsed;
+            } catch (e) {
+              console.log('[RizinInstance:parseJSON] Failed to parse even after sanitization:', e);
+            }
           }
           break;
         }

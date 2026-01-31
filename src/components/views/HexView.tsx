@@ -3,7 +3,7 @@ import { useUIStore, useSettingsStore } from '@/stores';
 import { cn } from '@/lib/utils';
 import { formatAddress } from '@/lib/utils/format';
 import { Input } from '@/components/ui';
-import { Search, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface HexViewProps {
   data: Uint8Array;
@@ -11,8 +11,8 @@ interface HexViewProps {
   className?: string;
 }
 
-const ROW_HEIGHT = 24;
-const VISIBLE_BUFFER = 5;
+const ROW_HEIGHT = 22;
+const OVERSCAN = 10;
 
 export function HexView({ data, offset, className }: HexViewProps) {
   const { hexBytesPerRow } = useSettingsStore();
@@ -27,14 +27,16 @@ export function HexView({ data, offset, className }: HexViewProps) {
   const totalRows = Math.ceil(data.length / hexBytesPerRow);
   const totalHeight = totalRows * ROW_HEIGHT;
   
-  const visibleStartRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
-  const visibleEndRow = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + VISIBLE_BUFFER);
+  const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endRow = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + OVERSCAN);
+  const visibleRowCount = endRow - startRow;
   
   const visibleRows = useMemo(() => {
     const rows = [];
-    for (let row = visibleStartRow; row < visibleEndRow; row++) {
+    for (let row = startRow; row < endRow; row++) {
       const start = row * hexBytesPerRow;
-      const chunk = data.slice(start, start + hexBytesPerRow);
+      const end = Math.min(start + hexBytesPerRow, data.length);
+      const chunk = data.slice(start, end);
       rows.push({
         index: row,
         offset: offset + start,
@@ -42,36 +44,40 @@ export function HexView({ data, offset, className }: HexViewProps) {
       });
     }
     return rows;
-  }, [data, offset, hexBytesPerRow, visibleStartRow, visibleEndRow]);
+  }, [data, offset, hexBytesPerRow, startRow, endRow]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const resizeObserver = new ResizeObserver(entries => {
+    const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         setContainerHeight(entry.contentRect.height);
       }
     });
 
-    resizeObserver.observe(container);
+    observer.observe(container);
     setContainerHeight(container.clientHeight);
 
-    return () => resizeObserver.disconnect();
+    return () => observer.disconnect();
   }, []);
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
 
-  const goToAddress = useCallback((addr: number) => {
-    const row = Math.floor((addr - offset) / hexBytesPerRow);
-    const newScrollTop = Math.max(0, (row - 3) * ROW_HEIGHT);
+  const scrollToRow = useCallback((row: number) => {
     if (containerRef.current) {
-      containerRef.current.scrollTop = newScrollTop;
+      containerRef.current.scrollTop = Math.max(0, row * ROW_HEIGHT - containerHeight / 2 + ROW_HEIGHT);
     }
+  }, [containerHeight]);
+
+  const goToAddress = useCallback((addr: number) => {
+    const byteOffset = addr - offset;
+    const row = Math.floor(byteOffset / hexBytesPerRow);
+    scrollToRow(row);
     setCurrentAddress(addr);
-  }, [offset, hexBytesPerRow, setCurrentAddress]);
+  }, [offset, hexBytesPerRow, scrollToRow, setCurrentAddress]);
 
   const handleSearch = useCallback(() => {
     if (!searchQuery.trim()) {
@@ -83,40 +89,44 @@ export function HexView({ data, offset, className }: HexViewProps) {
     const query = searchQuery.toLowerCase().replace(/\s/g, '');
     
     // Search as hex bytes
-    if (/^[0-9a-f]+$/.test(query) && query.length % 2 === 0) {
+    if (/^[0-9a-f]+$/.test(query) && query.length >= 2) {
       const searchBytes: number[] = [];
-      for (let i = 0; i < query.length; i += 2) {
+      for (let i = 0; i < query.length - (query.length % 2); i += 2) {
         searchBytes.push(parseInt(query.substring(i, i + 2), 16));
       }
       
-      for (let i = 0; i <= data.length - searchBytes.length; i++) {
-        let match = true;
-        for (let j = 0; j < searchBytes.length; j++) {
-          if (data[i + j] !== searchBytes[j]) {
-            match = false;
-            break;
+      if (searchBytes.length > 0) {
+        for (let i = 0; i <= data.length - searchBytes.length; i++) {
+          let match = true;
+          for (let j = 0; j < searchBytes.length; j++) {
+            if (data[i + j] !== searchBytes[j]) {
+              match = false;
+              break;
+            }
           }
-        }
-        if (match) {
-          results.push(offset + i);
-          if (results.length >= 1000) break;
+          if (match) {
+            results.push(offset + i);
+            if (results.length >= 500) break;
+          }
         }
       }
     }
     
     // Search as ASCII
     const queryBytes = new TextEncoder().encode(searchQuery);
-    for (let i = 0; i <= data.length - queryBytes.length; i++) {
-      let match = true;
-      for (let j = 0; j < queryBytes.length; j++) {
-        if (data[i + j] !== queryBytes[j]) {
-          match = false;
-          break;
+    if (queryBytes.length > 0) {
+      for (let i = 0; i <= data.length - queryBytes.length; i++) {
+        let match = true;
+        for (let j = 0; j < queryBytes.length; j++) {
+          if (data[i + j] !== queryBytes[j]) {
+            match = false;
+            break;
+          }
         }
-      }
-      if (match && !results.includes(offset + i)) {
-        results.push(offset + i);
-        if (results.length >= 1000) break;
+        if (match && !results.includes(offset + i)) {
+          results.push(offset + i);
+          if (results.length >= 500) break;
+        }
       }
     }
     
@@ -127,56 +137,68 @@ export function HexView({ data, offset, className }: HexViewProps) {
     }
   }, [searchQuery, data, offset, goToAddress]);
 
-  const nextResult = useCallback(() => {
+  const navigateResult = useCallback((direction: 1 | -1) => {
     if (searchResults.length === 0) return;
-    const next = (currentSearchIndex + 1) % searchResults.length;
+    const next = (currentSearchIndex + direction + searchResults.length) % searchResults.length;
     setCurrentSearchIndex(next);
     goToAddress(searchResults[next]);
   }, [searchResults, currentSearchIndex, goToAddress]);
 
-  const prevResult = useCallback(() => {
-    if (searchResults.length === 0) return;
-    const prev = (currentSearchIndex - 1 + searchResults.length) % searchResults.length;
-    setCurrentSearchIndex(prev);
-    goToAddress(searchResults[prev]);
-  }, [searchResults, currentSearchIndex, goToAddress]);
+  const jumpToStart = useCallback(() => {
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+  }, []);
+
+  const jumpToEnd = useCallback(() => {
+    if (containerRef.current) containerRef.current.scrollTop = totalHeight - containerHeight;
+  }, [totalHeight, containerHeight]);
 
   return (
     <div className={cn('flex flex-col h-full bg-background font-mono overflow-hidden', className)}>
-      <header className="flex h-10 items-center border-b border-border bg-muted/30 px-4 gap-4 shrink-0">
-        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-          {totalRows.toLocaleString()} rows • {data.length.toLocaleString()} bytes
+      <header className="flex h-9 items-center border-b border-border bg-muted/30 px-3 gap-3 shrink-0">
+        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
+          {data.length.toLocaleString()} bytes • {totalRows.toLocaleString()} rows
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          Row {Math.floor(scrollTop / ROW_HEIGHT) + 1}
+        </span>
+        <div className="flex gap-1">
+          <button onClick={jumpToStart} className="p-1 hover:bg-accent rounded" title="Jump to start">
+            <ChevronUp className="h-3 w-3" />
+          </button>
+          <button onClick={jumpToEnd} className="p-1 hover:bg-accent rounded" title="Jump to end">
+            <ChevronDown className="h-3 w-3" />
+          </button>
         </div>
         <div className="flex-1" />
-        <div className="relative flex items-center gap-2">
-          <Search className="absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+        <div className="relative flex items-center gap-1">
+          <Search className="absolute left-2 h-3 w-3 text-muted-foreground" />
           <Input
-            placeholder="Search hex or ASCII..."
+            placeholder="Hex or ASCII..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            className="pl-8 h-7 text-xs w-48"
+            className="pl-7 h-6 text-[11px] w-36"
           />
           {searchResults.length > 0 && (
             <>
-              <span className="text-xs text-muted-foreground">
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                 {currentSearchIndex + 1}/{searchResults.length}
               </span>
-              <button onClick={prevResult} className="p-1 hover:bg-accent rounded">
-                <ArrowUp className="h-3.5 w-3.5" />
+              <button onClick={() => navigateResult(-1)} className="p-0.5 hover:bg-accent rounded">
+                <ArrowUp className="h-3 w-3" />
               </button>
-              <button onClick={nextResult} className="p-1 hover:bg-accent rounded">
-                <ArrowDown className="h-3.5 w-3.5" />
+              <button onClick={() => navigateResult(1)} className="p-0.5 hover:bg-accent rounded">
+                <ArrowDown className="h-3 w-3" />
               </button>
             </>
           )}
         </div>
       </header>
 
-      <header className="flex h-8 items-center border-b border-border bg-muted/20 px-4 text-[10px] font-medium text-muted-foreground uppercase tracking-wider shrink-0">
-        <div className="w-24">Offset</div>
-        <div className="flex-1 px-4 text-center">Hex</div>
-        <div className="w-48 text-center border-l border-border">ASCII</div>
+      <header className="flex h-6 items-center border-b border-border bg-muted/20 px-3 text-[9px] font-medium text-muted-foreground uppercase tracking-wider shrink-0">
+        <div className="w-20">Offset</div>
+        <div className="flex-1 text-center">Hex</div>
+        <div className="w-36 text-center border-l border-border pl-2">ASCII</div>
       </header>
 
       <div
@@ -185,57 +207,69 @@ export function HexView({ data, offset, className }: HexViewProps) {
         onScroll={handleScroll}
       >
         <div style={{ height: totalHeight, position: 'relative' }}>
-          {visibleRows.map((line) => (
-            <div
-              key={line.offset}
-              style={{
-                position: 'absolute',
-                top: line.index * ROW_HEIGHT,
-                left: 0,
-                right: 0,
-                height: ROW_HEIGHT,
-              }}
-              className={cn(
-                'flex px-4 items-center text-sm hover:bg-accent/30 transition-colors',
-                line.offset <= currentAddress && currentAddress < line.offset + hexBytesPerRow && 'bg-primary/10',
-                searchResults.includes(line.offset) && 'bg-yellow-500/20'
-              )}
-            >
-              <div className="w-24 shrink-0 text-code-address opacity-80">
-                {formatAddress(line.offset, 32)}
-              </div>
+          {visibleRows.map((line) => {
+            const isCurrentRow = line.offset <= currentAddress && currentAddress < line.offset + hexBytesPerRow;
+            return (
+              <div
+                key={line.offset}
+                style={{
+                  position: 'absolute',
+                  top: line.index * ROW_HEIGHT,
+                  left: 0,
+                  right: 0,
+                  height: ROW_HEIGHT,
+                }}
+                className={cn(
+                  'flex items-center px-3 text-xs hover:bg-accent/20',
+                  isCurrentRow && 'bg-primary/10'
+                )}
+              >
+                <div 
+                  className="w-20 shrink-0 text-code-address opacity-70 cursor-pointer hover:opacity-100"
+                  onClick={() => setCurrentAddress(line.offset)}
+                >
+                  {formatAddress(line.offset, 32)}
+                </div>
 
-              <div className="flex-1 px-4 flex gap-1 justify-center">
-                {line.bytes.map((byte, i) => {
-                  const byteAddr = line.offset + i;
-                  const isCurrent = byteAddr === currentAddress;
-                  const isSearchHit = searchResults.includes(byteAddr);
-                  return (
-                    <span
-                      key={i}
-                      onClick={() => setCurrentAddress(byteAddr)}
-                      className={cn(
-                        'w-6 text-center text-xs tabular-nums cursor-pointer hover:bg-accent rounded',
-                        byte === 0 ? 'text-muted-foreground/30' : 'text-foreground',
-                        isCurrent && 'bg-primary text-primary-foreground rounded-sm font-bold',
-                        isSearchHit && !isCurrent && 'bg-yellow-500 text-black rounded-sm'
-                      )}
-                    >
-                      {byte.toString(16).padStart(2, '0')}
-                    </span>
-                  );
-                })}
-              </div>
+                <div className="flex-1 flex gap-0.5 justify-center">
+                  {line.bytes.map((byte, i) => {
+                    const byteAddr = line.offset + i;
+                    const isCurrent = byteAddr === currentAddress;
+                    const isSearchHit = searchResults.some(r => r <= byteAddr && byteAddr < r + (searchQuery.length / 2 || 1));
+                    return (
+                      <span
+                        key={i}
+                        onClick={() => setCurrentAddress(byteAddr)}
+                        className={cn(
+                          'w-5 text-center text-[11px] tabular-nums cursor-pointer rounded-sm',
+                          byte === 0 ? 'text-muted-foreground/25' : 'text-foreground',
+                          isCurrent && 'bg-primary text-primary-foreground font-semibold',
+                          isSearchHit && !isCurrent && 'bg-yellow-400/80 text-black'
+                        )}
+                      >
+                        {byte.toString(16).padStart(2, '0')}
+                      </span>
+                    );
+                  })}
+                  {/* Pad if row is incomplete */}
+                  {line.bytes.length < hexBytesPerRow && Array(hexBytesPerRow - line.bytes.length).fill(0).map((_, i) => (
+                    <span key={`pad-${i}`} className="w-5" />
+                  ))}
+                </div>
 
-              <div className="w-48 shrink-0 text-muted-foreground border-l border-border/50 px-4 whitespace-pre text-xs tabular-nums">
-                {line.bytes
-                  .map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.'))
-                  .join('')}
+                <div className="w-36 shrink-0 text-muted-foreground border-l border-border/40 pl-2 text-[11px] tabular-nums tracking-tight">
+                  {line.bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '·')).join('')}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+
+      <footer className="flex h-5 items-center justify-between border-t border-border bg-muted/20 px-3 text-[9px] text-muted-foreground shrink-0">
+        <span>Viewing {visibleRowCount} of {totalRows.toLocaleString()} rows</span>
+        <span>Current: 0x{currentAddress.toString(16).toUpperCase()}</span>
+      </footer>
     </div>
   );
 }
