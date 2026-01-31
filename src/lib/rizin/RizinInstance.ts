@@ -106,7 +106,7 @@ export class RizinInstance {
       '-e', 'scr.prompt=false',
       '-e', 'scr.utf8=false',
       '-e', 'scr.utf8.curvy=false',
-      '-e', 'log.level=1',
+      '-e', 'log.level=0',
       '-e', 'scr.pager=',
       '-q',
       '-c', command,
