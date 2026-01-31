@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import { toast } from 'sonner';
 import { useUIStore } from '@/stores';
 import { cn } from '@/lib/utils';
 import { formatAddressShort, formatSize } from '@/lib/utils/format';
@@ -24,6 +25,18 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
         formatAddressShort(f.offset).includes(term)
     );
   }, [functions, filter]);
+
+  const handleFunctionClick = useCallback((fcn: RzFunction) => {
+    // Copy function name to clipboard
+    navigator.clipboard.writeText(fcn.name).then(() => {
+      toast.success(`Copied: ${fcn.name}`, { duration: 1500 });
+    }).catch(() => {
+      toast.error('Failed to copy');
+    });
+    
+    // Also trigger selection
+    onSelect?.(fcn);
+  }, [onSelect]);
 
   return (
     <div className={cn('flex flex-col h-full bg-background border-r border-border', className)}>
@@ -53,7 +66,7 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
           {filteredFunctions.map((fcn) => (
             <button
               key={fcn.offset}
-              onClick={() => onSelect?.(fcn)}
+              onClick={(e) => handleFunctionClick(fcn, e)}
               className={cn(
                 'w-full flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-colors text-left group mb-0.5',
                 selectedFunction === fcn.name

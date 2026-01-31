@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatAddressShort } from '@/lib/utils/format';
 import type { RzString } from '@/types/rizin';
@@ -22,6 +23,19 @@ export function StringsView({ strings, onSelect, className }: StringsViewProps) 
         formatAddressShort(s.vaddr).includes(term)
     );
   }, [strings, filter]);
+
+  const handleStringClick = useCallback((s: RzString) => {
+    // Copy string content to clipboard
+    navigator.clipboard.writeText(s.string).then(() => {
+      const preview = s.string.length > 40 ? s.string.substring(0, 40) + '...' : s.string;
+      toast.success(`Copied: ${preview}`, { duration: 1500 });
+    }).catch(() => {
+      toast.error('Failed to copy');
+    });
+    
+    // Also trigger selection
+    onSelect?.(s);
+  }, [onSelect]);
 
   return (
     <div className={cn('flex flex-col h-full bg-background', className)}>
@@ -57,7 +71,7 @@ export function StringsView({ strings, onSelect, className }: StringsViewProps) 
           {filteredStrings.map((s, i) => (
             <button
               key={`${s.vaddr}-${i}`}
-              onClick={() => onSelect?.(s)}
+              onClick={() => handleStringClick(s)}
               className="w-full flex items-center px-4 py-2 hover:bg-accent text-left transition-colors font-mono text-xs group"
             >
               <div className="w-24 shrink-0 text-code-address opacity-80 group-hover:opacity-100">
