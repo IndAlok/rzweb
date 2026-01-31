@@ -207,6 +207,13 @@ export class RizinInstance {
         continue;
       }
       
+      // OUTSIDE strings: remove newlines/carriage returns that break JSON structure
+      // (These come from stdoutBuffer.join('\n') splitting up values)
+      if (!inString && (char === '\n' || char === '\r')) {
+        i++;
+        continue;
+      }
+      
       result += char;
       i++;
     }
