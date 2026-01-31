@@ -123,42 +123,92 @@ export class RizinInstance {
   }
 
   private sanitizeJSON(jsonStr: string): string {
-    // Escape control characters (0x00-0x1F) inside JSON strings
-    // These break JSON.parse but rizin sometimes outputs them
+    // Comprehensive JSON sanitization for rizin output
+    // Handles: control chars, invalid escapes (\x, \0, etc), high bytes
     let result = '';
     let inString = false;
-    let escape = false;
+    let i = 0;
     
-    for (let i = 0; i < jsonStr.length; i++) {
+    while (i < jsonStr.length) {
       const char = jsonStr[i];
       const code = jsonStr.charCodeAt(i);
       
-      if (escape) {
-        result += char;
-        escape = false;
+      // Handle escape sequences in strings
+      if (inString && char === '\\' && i + 1 < jsonStr.length) {
+        const nextChar = jsonStr[i + 1];
+        
+        // Valid JSON escapes: " \ / b f n r t and uXXXX
+        if ('"\\\/bfnrt'.includes(nextChar)) {
+          result += char + nextChar;
+          i += 2;
+          continue;
+        }
+        
+        // Handle \uXXXX
+        if (nextChar === 'u' && i + 5 < jsonStr.length) {
+          const hex = jsonStr.substring(i + 2, i + 6);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            result += jsonStr.substring(i, i + 6);
+            i += 6;
+            continue;
+          }
+        }
+        
+        // Handle \xXX (not valid JSON, convert to \u00XX)
+        if (nextChar === 'x' && i + 3 < jsonStr.length) {
+          const hex = jsonStr.substring(i + 2, i + 4);
+          if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+            result += '\\u00' + hex;
+            i += 4;
+            continue;
+          }
+        }
+        
+        // Handle \0, \1, etc (octal - not valid JSON)
+        if (nextChar >= '0' && nextChar <= '7') {
+          // Convert to \u00XX
+          let octal = '';
+          let j = i + 1;
+          while (j < jsonStr.length && j < i + 4 && jsonStr[j] >= '0' && jsonStr[j] <= '7') {
+            octal += jsonStr[j];
+            j++;
+          }
+          const val = parseInt(octal, 8);
+          result += '\\u' + val.toString(16).padStart(4, '0');
+          i = j;
+          continue;
+        }
+        
+        // Any other invalid escape - just escape the backslash itself
+        result += '\\\\';
+        i++;
         continue;
       }
       
-      if (char === '\\' && inString) {
-        result += char;
-        escape = true;
-        continue;
-      }
-      
+      // Toggle string state on unescaped quotes
       if (char === '"') {
         inString = !inString;
         result += char;
+        i++;
         continue;
       }
       
-      // If we're in a string and hit a control character, escape it
-      if (inString && code >= 0 && code <= 0x1F) {
-        // Convert to \uXXXX format
+      // In strings: escape control characters
+      if (inString && code <= 0x1F) {
         result += '\\u' + code.toString(16).padStart(4, '0');
+        i++;
+        continue;
+      }
+      
+      // In strings: escape high-byte characters that might cause issues
+      if (inString && code > 0x7F && code < 0xA0) {
+        result += '\\u' + code.toString(16).padStart(4, '0');
+        i++;
         continue;
       }
       
       result += char;
+      i++;
     }
     
     return result;
