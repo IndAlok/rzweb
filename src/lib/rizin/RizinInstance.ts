@@ -35,6 +35,8 @@ export class RizinInstance {
   private workDir = '/work';
   private analysisData: AnalysisData | null = null;
   private filePath: string = '';
+  private projectPath: string = '';
+  private hasAnalysis: boolean = false;
 
   private yield(): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, 0));
@@ -463,6 +465,13 @@ export class RizinInstance {
       if (Array.isArray(sections)) {
         this.analysisData.sections = sections;
       }
+
+      // Save project to persist analysis state for subsequent commands
+      this.projectPath = `${this.workDir}/project.rzdb`;
+      const saveCmd = `Ps ${this.projectPath}`;
+      this.runCommand(saveCmd, this.filePath);
+      this.hasAnalysis = true;
+      console.log('[RizinInstance:open] Saved project to', this.projectPath);
     } catch (e) {
       throw e;
     }
@@ -473,8 +482,13 @@ export class RizinInstance {
       return 'Error: No file loaded';
     }
 
-    // Analysis done once on file open, just run the command directly
-    return this.runCommand(command, this.filePath);
+    // Load project to restore analysis state if available
+    let finalCmd = command;
+    if (this.hasAnalysis && this.projectPath) {
+      finalCmd = `Po ${this.projectPath};${command}`;
+    }
+
+    return this.runCommand(finalCmd, this.filePath);
   }
 
   getLastStderr(): string {
@@ -488,12 +502,12 @@ export class RizinInstance {
   }
 
   async getDisassembly(address: number): Promise<string> {
-    // Use @ syntax to disassemble function at address
+    // Project loaded by executeCommand restores analysis state
     return this.executeCommand(`pdfj @ ${address}`);
   }
 
   async getGraph(address: number): Promise<unknown> {
-    // Use @ syntax to get graph at address
+    // Project loaded by executeCommand restores analysis state
     const output = await this.executeCommand(`agfj @ ${address}`);
     return this.parseJSON(output);
   }

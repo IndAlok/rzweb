@@ -101,7 +101,7 @@ export default function AnalysisPage() {
     
     setIsLoadingDisasm(true);
     try {
-      // Use @ syntax to disassemble function at address
+      // Project loaded by executeCommand restores analysis state
       const cmd = `pdfj @ ${address}`;
       console.log('[AnalysisPage:fetchDisassembly] Running:', cmd);
       const output = await activeInstance.executeCommand(cmd);
@@ -138,7 +138,7 @@ export default function AnalysisPage() {
     if (!activeInstance) return;
     
     try {
-      // Use @ syntax to get graph at address
+      // Project loaded by executeCommand restores analysis state
       const cmd = `agfj @ ${address}`;
       const output = await activeInstance.executeCommand(cmd);
       console.log('[AnalysisPage:fetchGraphData] Output:', output.substring(0, 500));
