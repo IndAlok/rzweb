@@ -101,7 +101,8 @@ export default function AnalysisPage() {
     
     setIsLoadingDisasm(true);
     try {
-      const cmd = `aaa;s ${address};pdfj`;
+      // Analysis already done on file open, just seek and disassemble
+      const cmd = `s ${address};pdfj`;
       console.log('[AnalysisPage:fetchDisassembly] Running:', cmd);
       const output = await activeInstance.executeCommand(cmd);
       console.log('[AnalysisPage:fetchDisassembly] Output length:', output.length);
@@ -137,7 +138,8 @@ export default function AnalysisPage() {
     if (!activeInstance) return;
     
     try {
-      const cmd = `aaa;s ${address};agf json`;
+      // Analysis already done on file open, just seek and get graph
+      const cmd = `s ${address};agf json`;
       const output = await activeInstance.executeCommand(cmd);
       console.log('[AnalysisPage:fetchGraphData] Output:', output.substring(0, 500));
       

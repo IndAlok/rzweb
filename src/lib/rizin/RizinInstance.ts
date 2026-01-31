@@ -468,33 +468,13 @@ export class RizinInstance {
     }
   }
 
-  /**
-   * @brief Check if command needs analysis prefix
-   * @details Scans all semicolon-separated parts for analysis commands
-   */
-  private needsAnalysis(cmd: string): boolean {
-    const analysisCommands = ['pdf', 'afl', 'afn', 'agf', 'agc', 'VV', 'ax', 'af', 'pd '];
-    const parts = cmd.trim().split(';').map(p => p.trim());
-    
-    return parts.some(part => {
-      if (part.startsWith('s ') || part === 's' || part.startsWith('s;')) {
-        return false;
-      }
-      return analysisCommands.some(ac => part.startsWith(ac));
-    });
-  }
-
   async executeCommand(command: string): Promise<string> {
     if (!this._isOpen || !this.file) {
       return 'Error: No file loaded';
     }
 
-    let finalCmd = command;
-    if (this.needsAnalysis(command) && !command.includes('aa')) {
-      finalCmd = `aa;${command}`;
-    }
-
-    return this.runCommand(finalCmd, this.filePath);
+    // Analysis done once on file open, just run the command directly
+    return this.runCommand(command, this.filePath);
   }
 
   getLastStderr(): string {
@@ -508,11 +488,13 @@ export class RizinInstance {
   }
 
   async getDisassembly(address: number): Promise<string> {
-    return this.executeCommand(`aa;s ${address};pdfj`);
+    // Analysis already done on file open, just seek and disassemble
+    return this.executeCommand(`s ${address};pdfj`);
   }
 
   async getGraph(address: number): Promise<unknown> {
-    const output = await this.executeCommand(`aa;s ${address};agfj`);
+    // Analysis already done on file open, just seek and get graph
+    const output = await this.executeCommand(`s ${address};agfj`);
     return this.parseJSON(output);
   }
 
