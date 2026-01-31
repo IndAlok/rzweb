@@ -251,15 +251,47 @@ export class RizinInstance {
             const parsed = JSON.parse(jsonStr);
             console.log('[RizinInstance:parseJSON] Parsed array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
             return parsed;
-          } catch {
+          } catch (directErr) {
             // Try with sanitization for control characters
             try {
               const sanitized = this.sanitizeJSON(jsonStr);
               const parsed = JSON.parse(sanitized);
               console.log('[RizinInstance:parseJSON] Parsed sanitized array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
               return parsed;
-            } catch (e) {
-              console.log('[RizinInstance:parseJSON] Failed to parse even after sanitization:', e);
+            } catch (e: unknown) {
+              const err = e as Error;
+              console.log('[RizinInstance:parseJSON] Failed to parse even after sanitization:', err.message);
+              
+              // Extract position from error message
+              const posMatch = err.message.match(/position (\d+)/);
+              if (posMatch) {
+                const pos = parseInt(posMatch[1]);
+                const sanitized = this.sanitizeJSON(jsonStr);
+                const start = Math.max(0, pos - 100);
+                const end = Math.min(sanitized.length, pos + 100);
+                const context = sanitized.substring(start, end);
+                
+                console.log(`[RizinInstance:parseJSON] Error at position ${pos}:`);
+                console.log(`[RizinInstance:parseJSON] Context (${start}-${end}):`);
+                console.log(context);
+                
+                // Show hex codes around error
+                const hexStart = Math.max(0, pos - 20);
+                const hexEnd = Math.min(sanitized.length, pos + 20);
+                const hexChars = [];
+                for (let h = hexStart; h < hexEnd; h++) {
+                  const code = sanitized.charCodeAt(h);
+                  hexChars.push(`${h === pos ? '>>>' : ''}${code.toString(16).padStart(2, '0')}${h === pos ? '<<<' : ''}`);
+                }
+                console.log('[RizinInstance:parseJSON] Hex around error:', hexChars.join(' '));
+                
+                // Show the actual character at error position
+                console.log(`[RizinInstance:parseJSON] Char at ${pos}: "${sanitized[pos]}" (0x${sanitized.charCodeAt(pos).toString(16)})`);
+              }
+              
+              // Log first 500 chars to see structure
+              console.log('[RizinInstance:parseJSON] First 500 chars of sanitized JSON:');
+              console.log(jsonStr.substring(0, 500));
             }
           }
           break;
