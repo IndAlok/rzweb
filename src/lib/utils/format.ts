@@ -1,9 +1,11 @@
-export function formatAddress(addr: number, bits: number = 64): string {
+export function formatAddress(addr: number | undefined | null, bits: number = 64): string {
+  if (addr == null || typeof addr !== 'number' || isNaN(addr)) return '0x0';
   const hexLength = bits / 4;
   return '0x' + addr.toString(16).padStart(hexLength, '0');
 }
 
-export function formatAddressShort(addr: number): string {
+export function formatAddressShort(addr: number | undefined | null): string {
+  if (addr == null || typeof addr !== 'number' || isNaN(addr)) return '0x0';
   return '0x' + addr.toString(16);
 }
 

@@ -24,6 +24,7 @@ export default function AnalysisPage() {
   const { ioCache, analysisDepth } = useSettingsStore();
 
   const [activeInstance, setActiveInstance] = useState<RizinInstance | null>(null);
+  const [analysisReady, setAnalysisReady] = useState(false);
   const [disasmLines, setDisasmLines] = useState<RzDisasmLine[]>([]);
   const [isLoadingDisasm, setIsLoadingDisasm] = useState(false);
   const [graphNodes, setGraphNodes] = useState<Array<{id: string; label: string; body?: string}>>([]);
@@ -31,14 +32,14 @@ export default function AnalysisPage() {
   const terminalRef = useRef<RizinTerminalRef>(null);
 
   const functions = useMemo<RzFunction[]>(() => {
-    if (!activeInstance?.analysis) return [];
+    if (!activeInstance?.analysis || !analysisReady) return [];
     return activeInstance.analysis.functions as RzFunction[];
-  }, [activeInstance]);
+  }, [activeInstance, analysisReady]);
 
   const strings = useMemo<RzString[]>(() => {
-    if (!activeInstance?.analysis) return [];
+    if (!activeInstance?.analysis || !analysisReady) return [];
     return activeInstance.analysis.strings as RzString[];
-  }, [activeInstance]);
+  }, [activeInstance, analysisReady]);
 
   useEffect(() => {
     if (!currentFile) {
@@ -74,6 +75,7 @@ export default function AnalysisPage() {
         });
 
         setActiveInstance(rz);
+        setAnalysisReady(true);
         setLoadPhase('ready');
         toast.success(`Rizin ${version} loaded`);
 

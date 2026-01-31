@@ -66,9 +66,25 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           const stderrLines = stderr.split('\n').filter(line => {
             const trimmed = line.trim();
             if (!trimmed) return false;
+            // Skip all log-level messages (INFO, DEBUG, VERBOSE, WARNING)
+            if (trimmed.startsWith('INFO:')) return false;
+            if (trimmed.startsWith('DEBUG:')) return false;
+            if (trimmed.startsWith('VERBOSE:')) return false;
+            if (trimmed.startsWith('WARNING:')) return false;
+            // Skip I/O write errors (Emscripten WASM limitation)
+            if (trimmed.includes('write(rz_cons_instance.fdout')) return false;
+            if (trimmed.includes('I/O error') && trimmed.includes('write')) return false;
+            // Skip noisy analysis messages
+            if (trimmed.includes('Cannot open directory')) return false;
+            if (trimmed.includes('Jump table target is not valid')) return false;
+            if (trimmed.includes('No calling convention')) return false;
+            if (trimmed.includes('to extract register arguments')) return false;
             // Skip repetitive warnings but keep ERROR messages and command help
             if (trimmed.includes('Neither hash nor gnu_hash')) return false;
             if (trimmed.includes('rz_config_node_desc: assertion')) return false;
+            if (trimmed.includes('rz_config_set:')) return false;
+            if (trimmed.includes('rz_config_get:')) return false;
+            if (trimmed.includes('variable') && trimmed.includes('not found')) return false;
             return true;
           });
           stderrLines.forEach(line => {
@@ -82,12 +98,88 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           });
         }
         
-        // Show stdout
+        // Show stdout with pagination for large outputs
         if (result && result.trim()) {
-          const lines = result.split('\n');
-          lines.forEach(line => {
-            term.writeln(line);
-          });
+          const LINES_PER_PAGE = 100;
+          const allLines = result.split('\n');
+          const totalLines = allLines.length;
+          
+          if (totalLines <= LINES_PER_PAGE) {
+            // Small output - render directly
+            allLines.forEach(line => term.writeln(line));
+          } else {
+            // Large output - use pagination
+            const totalPages = Math.ceil(totalLines / LINES_PER_PAGE);
+            
+            const renderPage = (page: number) => {
+              const start = page * LINES_PER_PAGE;
+              const end = Math.min(start + LINES_PER_PAGE, totalLines);
+              const pageLines = allLines.slice(start, end);
+              
+              pageLines.forEach(line => term.writeln(line));
+              
+              if (end < totalLines) {
+                const remaining = totalLines - end;
+                const nextPage = page + 1;
+                term.writeln('');
+                term.writeln(`\x1b[36m────────────────────────────────────────────────────────────\x1b[0m`);
+                term.writeln(`\x1b[1;36m  Page ${nextPage}/${totalPages}  \x1b[0m│\x1b[33m  Lines ${start + 1}-${end} of ${totalLines}  \x1b[0m│\x1b[32m  ${remaining} more lines  \x1b[0m`);
+                term.writeln(`\x1b[36m────────────────────────────────────────────────────────────\x1b[0m`);
+                term.writeln(`\x1b[35m  [m]\x1b[0m Show more  │  \x1b[35m[a]\x1b[0m Show all  │  \x1b[35m[Enter]\x1b[0m Continue to prompt`);
+                term.writeln(`\x1b[36m────────────────────────────────────────────────────────────\x1b[0m`);
+                
+                // Store pagination state for keyboard handler
+                (term as any)._paginationState = {
+                  allLines,
+                  currentPage: nextPage,
+                  totalPages,
+                  totalLines,
+                  LINES_PER_PAGE,
+                  renderPage,
+                  renderAll: () => {
+                    // Use chunked async rendering to prevent browser freeze
+                    const CHUNK_SIZE = 50;
+                    let currentIdx = end;
+                    let cancelled = false;
+                    
+                    // Allow user to cancel with 'q'
+                    (term as any)._renderingAll = true;
+                    
+                    const renderChunk = () => {
+                      if (cancelled || currentIdx >= totalLines) {
+                        term.writeln(`\x1b[36m── End of output (${totalLines} total lines) ──\x1b[0m`);
+                        (term as any)._paginationState = null;
+                        (term as any)._renderingAll = false;
+                        return;
+                      }
+                      
+                      const chunkEnd = Math.min(currentIdx + CHUNK_SIZE, totalLines);
+                      for (let i = currentIdx; i < chunkEnd; i++) {
+                        term.writeln(allLines[i]);
+                      }
+                      currentIdx = chunkEnd;
+                      
+                      // Show progress every 500 lines
+                      if (currentIdx % 500 === 0 && currentIdx < totalLines) {
+                        term.writeln(`\x1b[90m... rendered ${currentIdx}/${totalLines} lines (press q to stop) ...\x1b[0m`);
+                      }
+                      
+                      requestAnimationFrame(renderChunk);
+                    };
+                    
+                    term.writeln('');
+                    term.writeln(`\x1b[32mRendering all ${totalLines - end} remaining lines...\x1b[0m`);
+                    requestAnimationFrame(renderChunk);
+                  }
+                };
+              } else {
+                term.writeln(`\x1b[36m── End of output (${totalLines} total lines) ──\x1b[0m`);
+                (term as any)._paginationState = null;
+              }
+            };
+            
+            renderPage(0);
+          }
         }
       } catch (e) {
         term.writeln(`\x1b[31mError: ${e}\x1b[0m`);
@@ -229,6 +321,32 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       showPrompt();
 
       const dataHandler = term.onData((data) => {
+        // Handle pagination controls first
+        const paginationState = (term as any)._paginationState;
+        if (paginationState) {
+          if (data === 'm' || data === 'M') {
+            // Show more - render next page
+            term.writeln('');
+            paginationState.renderPage(paginationState.currentPage);
+            return;
+          }
+          if (data === 'a' || data === 'A') {
+            // Show all remaining content
+            paginationState.renderAll();
+            showPrompt();
+            return;
+          }
+          if (data === '\r' || data === '\n') {
+            // Exit pagination, continue to prompt
+            (term as any)._paginationState = null;
+            term.writeln('');
+            showPrompt();
+            return;
+          }
+          // Ignore other keys during pagination
+          return;
+        }
+        
         if (data === '\x03') {
           inputBuffer.current = '';
           term.write('^C\r\n');
