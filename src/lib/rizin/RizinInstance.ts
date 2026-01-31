@@ -126,20 +126,107 @@ export class RizinInstance {
     const trimmed = text.trim();
     if (!trimmed) return null;
     
+    // Try to find JSON array starting with [
+    const arrayStart = trimmed.indexOf('[');
+    if (arrayStart !== -1) {
+      // Find matching closing bracket
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = arrayStart; i < trimmed.length; i++) {
+        const char = trimmed[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        
+        if (char === '[') depth++;
+        if (char === ']') depth--;
+        
+        if (depth === 0) {
+          const jsonStr = trimmed.substring(arrayStart, i + 1);
+          try {
+            const parsed = JSON.parse(jsonStr);
+            console.log('[RizinInstance:parseJSON] Parsed array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
+            return parsed;
+          } catch (e) {
+            console.log('[RizinInstance:parseJSON] Failed to parse extracted JSON:', e);
+          }
+          break;
+        }
+      }
+    }
+    
+    // Try object extraction
+    const objStart = trimmed.indexOf('{');
+    if (objStart !== -1) {
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = objStart; i < trimmed.length; i++) {
+        const char = trimmed[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        
+        if (char === '{') depth++;
+        if (char === '}') depth--;
+        
+        if (depth === 0) {
+          const jsonStr = trimmed.substring(objStart, i + 1);
+          try {
+            return JSON.parse(jsonStr);
+          } catch {
+            // Continue trying
+          }
+          break;
+        }
+      }
+    }
+    
+    // Fallback: simple regex match
     const jsonMatch = trimmed.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
     if (jsonMatch) {
       try {
         return JSON.parse(jsonMatch[1]);
       } catch {
-        // JSON parse failed
+        // Try parsing each line for a clean JSON line
+        const lines = trimmed.split('\n');
+        for (const line of lines) {
+          const lineTrim = line.trim();
+          if ((lineTrim.startsWith('[') && lineTrim.endsWith(']')) ||
+              (lineTrim.startsWith('{') && lineTrim.endsWith('}'))) {
+            try {
+              return JSON.parse(lineTrim);
+            } catch {
+              // Continue
+            }
+          }
+        }
       }
     }
     
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return null;
-    }
+    console.log('[RizinInstance:parseJSON] Failed to extract JSON from:', trimmed.substring(0, 200));
+    return null;
   }
 
   /**
@@ -186,28 +273,41 @@ export class RizinInstance {
       await this.yield();
       
       if (isLargeFile) {
-        // For large files, use 'aF' (analyze functions from symbols) which is fast
+        console.log('[RizinInstance:open] Large file mode - using aF;aflj');
         const analysisOutput = this.runCommand('aF;aflj', this.filePath);
+        console.log('[RizinInstance:open] aflj output length:', analysisOutput.length);
         const functions = this.parseJSON(analysisOutput);
         if (Array.isArray(functions)) {
           this.analysisData.functions = functions;
+          console.log('[RizinInstance:open] Found', functions.length, 'functions');
+        } else {
+          console.log('[RizinInstance:open] No functions parsed');
         }
       } else {
-        // For small files, run full analysis
         const depth = config?.analysisDepth || 1;
         const analysisCmd = depth >= 3 ? 'aaaa' : (depth >= 2 ? 'aaa' : 'aa');
+        console.log('[RizinInstance:open] Small file mode - using', analysisCmd);
         const analysisOutput = this.runCommand(`${analysisCmd};aflj`, this.filePath);
+        console.log('[RizinInstance:open] aflj output length:', analysisOutput.length);
         const functions = this.parseJSON(analysisOutput);
         if (Array.isArray(functions)) {
           this.analysisData.functions = functions;
+          console.log('[RizinInstance:open] Found', functions.length, 'functions');
+        } else {
+          console.log('[RizinInstance:open] No functions parsed');
         }
       }
 
       await this.yield();
+      console.log('[RizinInstance:open] Running izzj for strings');
       const stringsOutput = this.runCommand('izzj', this.filePath);
+      console.log('[RizinInstance:open] izzj output length:', stringsOutput.length);
       const strings = this.parseJSON(stringsOutput);
       if (Array.isArray(strings)) {
         this.analysisData.strings = strings;
+        console.log('[RizinInstance:open] Found', strings.length, 'strings');
+      } else {
+        console.log('[RizinInstance:open] No strings parsed');
       }
 
       await this.yield();
