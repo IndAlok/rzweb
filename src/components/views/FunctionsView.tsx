@@ -66,7 +66,7 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
           {filteredFunctions.map((fcn) => (
             <button
               key={fcn.offset}
-              onClick={(e) => handleFunctionClick(fcn, e)}
+              onClick={() => handleFunctionClick(fcn)}
               className={cn(
                 'w-full flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-colors text-left group mb-0.5',
                 selectedFunction === fcn.name
