@@ -488,13 +488,13 @@ export class RizinInstance {
   }
 
   async getDisassembly(address: number): Promise<string> {
-    // Analysis already done on file open, just seek and disassemble
-    return this.executeCommand(`s ${address};pdfj`);
+    // Use @ syntax to disassemble function at address
+    return this.executeCommand(`pdfj @ ${address}`);
   }
 
   async getGraph(address: number): Promise<unknown> {
-    // Analysis already done on file open, just seek and get graph
-    const output = await this.executeCommand(`s ${address};agfj`);
+    // Use @ syntax to get graph at address
+    const output = await this.executeCommand(`agfj @ ${address}`);
     return this.parseJSON(output);
   }
 

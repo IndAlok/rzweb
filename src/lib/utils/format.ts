@@ -3,7 +3,8 @@ export function formatAddress(addr: number, bits: number = 64): string {
   return '0x' + addr.toString(16).padStart(hexLength, '0');
 }
 
-export function formatAddressShort(addr: number): string {
+export function formatAddressShort(addr: number | undefined | null): string {
+  if (addr === undefined || addr === null || isNaN(addr)) return '0x?';
   return '0x' + addr.toString(16);
 }
 
