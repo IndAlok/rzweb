@@ -66,14 +66,19 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           const stderrLines = stderr.split('\n').filter(line => {
             const trimmed = line.trim();
             if (!trimmed) return false;
+            // Skip all log-level messages (INFO, DEBUG, VERBOSE, WARNING)
+            if (trimmed.startsWith('INFO:')) return false;
+            if (trimmed.startsWith('DEBUG:')) return false;
+            if (trimmed.startsWith('VERBOSE:')) return false;
+            if (trimmed.startsWith('WARNING:')) return false;
             // Skip I/O write errors (Emscripten WASM limitation)
             if (trimmed.includes('write(rz_cons_instance.fdout')) return false;
             if (trimmed.includes('I/O error') && trimmed.includes('write')) return false;
-            // Skip INFO and VERBOSE messages (noisy in WASM)
-            if (trimmed.startsWith('INFO:')) return false;
-            if (trimmed.startsWith('VERBOSE:')) return false;
+            // Skip noisy analysis messages
             if (trimmed.includes('Cannot open directory')) return false;
             if (trimmed.includes('Jump table target is not valid')) return false;
+            if (trimmed.includes('No calling convention')) return false;
+            if (trimmed.includes('to extract register arguments')) return false;
             // Skip repetitive warnings but keep ERROR messages and command help
             if (trimmed.includes('Neither hash nor gnu_hash')) return false;
             if (trimmed.includes('rz_config_node_desc: assertion')) return false;
