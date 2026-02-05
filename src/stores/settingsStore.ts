@@ -50,7 +50,7 @@ const defaultSettings = {
   autoAnalysis: false,
   showLineNumbers: true,
   hexBytesPerRow: 16,
-  defaultVersion: '0.8.1',
+  defaultVersion: 'latest',
   cacheVersions: true,
   enableAnimations: true,
   compactMode: false,

@@ -16,7 +16,7 @@ export default function HomePage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [rizinVersion, setRizinVersion] = useState('0.8.1');
+  const [rizinVersion, setRizinVersion] = useState('...');
 
   useEffect(() => {
     getRizinVersion().then(setRizinVersion);
