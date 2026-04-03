@@ -17,7 +17,6 @@ export function DisassemblyView({ lines, onNavigate, className }: DisassemblyVie
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Optional: add scroll to current address logic here
   }, [currentAddress]);
 
   return (

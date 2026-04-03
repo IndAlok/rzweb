@@ -6,11 +6,11 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { useFileStore, useRizinStore, useUIStore, useSettingsStore } from '@/stores';
 import { loadRizinModule, getCachedVersions, RizinInstance } from '@/lib/rizin';
 import { RizinTerminal, type RizinTerminalRef } from '@/components/terminal';
-import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView } from '@/components/views';
+import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel } from '@/components/views';
 import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home } from 'lucide-react';
-import type { RzFunction, RzDisasmLine, RzString } from '@/types/rizin';
+import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info } from 'lucide-react';
+import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection, RzBinInfo } from '@/types/rizin';
 
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
@@ -39,6 +39,27 @@ export default function AnalysisPage() {
   const strings = useMemo<RzString[]>(() => {
     if (!activeInstance?.analysis || !analysisReady) return [];
     return activeInstance.analysis.strings as RzString[];
+  }, [activeInstance, analysisReady]);
+
+  const imports = useMemo<RzImport[]>(() => {
+    if (!activeInstance?.analysis || !analysisReady) return [];
+    return activeInstance.analysis.imports as RzImport[];
+  }, [activeInstance, analysisReady]);
+
+  const exports = useMemo<RzExport[]>(() => {
+    if (!activeInstance?.analysis || !analysisReady) return [];
+    return activeInstance.analysis.exports as RzExport[];
+  }, [activeInstance, analysisReady]);
+
+  const sections = useMemo<RzSection[]>(() => {
+    if (!activeInstance?.analysis || !analysisReady) return [];
+    return activeInstance.analysis.sections as RzSection[];
+  }, [activeInstance, analysisReady]);
+
+  const binInfo = useMemo<RzBinInfo | null>(() => {
+    if (!activeInstance?.analysis || !analysisReady) return null;
+    const info = activeInstance.analysis.info as any;
+    return info?.core?.info || info?.info || info || null;
   }, [activeInstance, analysisReady]);
 
   useEffect(() => {
@@ -77,7 +98,11 @@ export default function AnalysisPage() {
         setActiveInstance(rz);
         setAnalysisReady(true);
         setLoadPhase('ready');
-        toast.success(`Rizin ${version} loaded`);
+        if (rz.cacheHit) {
+          toast.success('Loaded from analysis cache');
+        } else {
+          toast.success(`Analysis complete`);
+        }
 
       } catch (error) {
         console.error('Failed to load Rizin:', error);
@@ -101,10 +126,10 @@ export default function AnalysisPage() {
     
     setIsLoadingDisasm(true);
     try {
-      const cmd = `aaa;s ${address};pdfj`;
-      console.log('[AnalysisPage:fetchDisassembly] Running:', cmd);
+      const cmd = `s ${address};pdfj`;
+
       const output = await activeInstance.executeCommand(cmd);
-      console.log('[AnalysisPage:fetchDisassembly] Output length:', output.length);
+
       
       if (output) {
         try {
@@ -121,7 +146,7 @@ export default function AnalysisPage() {
                 refs: op.refs,
               }));
               setDisasmLines(lines);
-              console.log('[AnalysisPage:fetchDisassembly] Parsed', lines.length, 'instructions');
+
             }
           }
         } catch (e) {
@@ -137,48 +162,53 @@ export default function AnalysisPage() {
     if (!activeInstance) return;
     
     try {
-      const cmd = `aaa;s ${address};agf json`;
+      const cmd = `s ${address};agfj`;
       const output = await activeInstance.executeCommand(cmd);
-      console.log('[AnalysisPage:fetchGraphData] Output:', output.substring(0, 500));
       
       if (output && output.length > 2) {
         try {
-          // agf json returns: {"nodes":[{id, title, body, offset, out_nodes}]}
-          const jsonMatch = output.match(/(\{[\s\S]*\})/);
+          const jsonMatch = output.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[1]);
-            const graphNodes = parsed.nodes || [];
             
-            if (graphNodes.length > 0) {
-              // Map nodes: id is numeric, title is address label, body is disasm
-              const nodes = graphNodes.map((node: any) => ({
-                id: String(node.id),
-                label: node.title || `0x${node.offset?.toString(16) || '0'}`,
-                body: node.body || '',
+            let graphBlocks: any[] = [];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              graphBlocks = parsed[0]?.blocks || parsed[0]?.nodes || [];
+            } else if (parsed.nodes) {
+              graphBlocks = parsed.nodes;
+            } else if (parsed.blocks) {
+              graphBlocks = parsed.blocks;
+            }
+            
+            if (graphBlocks.length > 0) {
+              const nodes = graphBlocks.map((node: any, idx: number) => ({
+                id: String(node.offset ?? node.id ?? idx),
+                label: node.title || `0x${(node.offset ?? 0).toString(16)}`,
+                body: node.body || node.ops?.map((o: any) => o.disasm || o.opcode || '').join('\n') || '',
               }));
               
-              // Build edges from out_nodes array
               const edges: Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}> = [];
-              graphNodes.forEach((node: any) => {
+              graphBlocks.forEach((node: any) => {
+                const nodeId = String(node.offset ?? node.id ?? 0);
+                
+                if (node.jump != null && node.jump !== -1) {
+                  edges.push({ source: nodeId, target: String(node.jump), type: 'jump' });
+                }
+                if (node.fail != null && node.fail !== -1) {
+                  edges.push({ source: nodeId, target: String(node.fail), type: 'fail' });
+                }
+                
                 const outNodes = node.out_nodes || [];
                 outNodes.forEach((targetId: number, idx: number) => {
-                  // First out_node is usually true branch (jump), second is false (fail)
                   const edgeType = outNodes.length === 2 
                     ? (idx === 0 ? 'jump' as const : 'fail' as const)
                     : 'jump' as const;
-                  edges.push({ 
-                    source: String(node.id), 
-                    target: String(targetId), 
-                    type: edgeType 
-                  });
+                  edges.push({ source: nodeId, target: String(targetId), type: edgeType });
                 });
               });
               
-              console.log('[AnalysisPage:fetchGraphData] Parsed nodes:', nodes.length, 'edges:', edges.length);
               setGraphNodes(nodes);
               setGraphEdges(edges);
-            } else {
-              console.log('[AnalysisPage:fetchGraphData] No nodes in graph');
             }
           }
         } catch (e) {
@@ -191,7 +221,7 @@ export default function AnalysisPage() {
   }, [activeInstance]);
 
   const handleFunctionSelect = useCallback((fcn: RzFunction) => {
-    console.log('[AnalysisPage:handleFunctionSelect]', fcn.name, fcn.offset);
+
     setCurrentAddress(fcn.offset);
     setSelectedFunction(fcn.name);
     if (currentView === 'terminal') {
@@ -224,7 +254,7 @@ export default function AnalysisPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-card px-4">
+      <header className="flex h-12 shrink-0 items-center gap-1 sm:gap-2 border-b border-border bg-card px-2 sm:px-4 overflow-hidden">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon-sm" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -232,35 +262,50 @@ export default function AnalysisPage() {
           <Button variant="ghost" size="icon-sm" onClick={handleGoHome} title="Back to Home">
             <Home className="h-4 w-4" />
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2">
             <TerminalIcon className="h-5 w-5 text-primary" />
             <span className="font-bold text-sm tracking-tight text-foreground">RzWeb</span>
           </div>
+          <TerminalIcon className="sm:hidden h-5 w-5 text-primary" />
         </div>
 
-        <div className="h-6 w-px bg-border mx-2" />
+        <div className="h-6 w-px bg-border mx-1 sm:mx-2 hidden sm:block" />
 
-        <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
-          <TabsList className="h-8 bg-muted/50">
-            <TabsTrigger value="terminal" className="text-xs gap-1.5 px-3">
-              <TerminalIcon className="h-3.5 w-3.5" /> Terminal
-            </TabsTrigger>
-            <TabsTrigger value="disasm" className="text-xs gap-1.5 px-3">
-              <Code className="h-3.5 w-3.5" /> Disassembly
-            </TabsTrigger>
-            <TabsTrigger value="hex" className="text-xs gap-1.5 px-3">
-              <Layout className="h-3.5 w-3.5" /> Hex
-            </TabsTrigger>
-            <TabsTrigger value="strings" className="text-xs gap-1.5 px-3">
-              <Quote className="h-3.5 w-3.5" /> Strings
-            </TabsTrigger>
-            <TabsTrigger value="graph" className="text-xs gap-1.5 px-3">
-              <Share2 className="h-3.5 w-3.5" /> Graph
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hidden">
+          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
+            <TabsList className="h-8 bg-muted/50 flex-nowrap">
+              <TabsTrigger value="terminal" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <TerminalIcon className="h-3.5 w-3.5" /><span className="hidden sm:inline">Terminal</span>
+              </TabsTrigger>
+              <TabsTrigger value="disasm" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Code className="h-3.5 w-3.5" /><span className="hidden sm:inline">Disasm</span>
+              </TabsTrigger>
+              <TabsTrigger value="hex" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Layout className="h-3.5 w-3.5" /><span className="hidden sm:inline">Hex</span>
+              </TabsTrigger>
+              <TabsTrigger value="strings" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Quote className="h-3.5 w-3.5" /><span className="hidden sm:inline">Strings</span>
+              </TabsTrigger>
+              <TabsTrigger value="graph" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Share2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Graph</span>
+              </TabsTrigger>
+              <TabsTrigger value="imports" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Package className="h-3.5 w-3.5" /><span className="hidden sm:inline">Imports</span>
+              </TabsTrigger>
+              <TabsTrigger value="exports" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <ArrowUpRight className="h-3.5 w-3.5" /><span className="hidden sm:inline">Exports</span>
+              </TabsTrigger>
+              <TabsTrigger value="sections" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Layers className="h-3.5 w-3.5" /><span className="hidden sm:inline">Sections</span>
+              </TabsTrigger>
+              <TabsTrigger value="info" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
+                <Info className="h-3.5 w-3.5" /><span className="hidden sm:inline">Info</span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2 shrink-0">
           {currentFile && (
             <Badge variant="outline" className="hidden md:flex gap-1.5 font-mono text-[10px] py-1 border-primary/20 bg-primary/5">
               <FileCode className="h-3 w-3 text-primary" /> {currentFile.name}
@@ -314,12 +359,16 @@ export default function AnalysisPage() {
               {currentView === 'hex' && currentFile && <HexView data={currentFile.data} offset={currentAddress} />}
               {currentView === 'strings' && <StringsView strings={strings} onSelect={(s) => setCurrentAddress(s.vaddr)} />}
               {currentView === 'graph' && <GraphView nodes={graphNodes} edges={graphEdges} />}
+              {currentView === 'imports' && <ImportsView imports={imports} onNavigate={setCurrentAddress} />}
+              {currentView === 'exports' && <ExportsView exports={exports} onNavigate={setCurrentAddress} />}
+              {currentView === 'sections' && <SectionsView sections={sections} onNavigate={setCurrentAddress} />}
+              {currentView === 'info' && <HeaderInfoPanel info={binInfo} fileSize={currentFile?.size} />}
             </div>
           </Panel>
         </PanelGroup>
       </div>
 
-      <footer className="flex h-6 shrink-0 items-center justify-between border-t border-border bg-card px-4 text-[10px] text-muted-foreground">
+      <footer className="flex h-6 shrink-0 items-center justify-between border-t border-border bg-card px-2 sm:px-4 text-[10px] text-muted-foreground">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <div className={cn("h-2 w-2 rounded-full", activeInstance ? "bg-green-500" : "bg-muted")} />

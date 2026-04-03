@@ -17,7 +17,7 @@ async function fetchVersion(): Promise<string> {
       }
     }
   } catch {
-    // Local VERSION not available
+
   }
   
   try {
@@ -30,7 +30,7 @@ async function fetchVersion(): Promise<string> {
       }
     }
   } catch {
-    // Remote VERSION not available
+
   }
   
   return 'unknown';

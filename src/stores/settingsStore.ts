@@ -45,7 +45,7 @@ const defaultSettings = {
   terminalFontSize: 14,
   terminalScrollback: 10000,
   terminalCursorBlink: true,
-  analysisDepth: 24,
+  analysisDepth: 2,
   ioCache: true,
   autoAnalysis: false,
   showLineNumbers: true,

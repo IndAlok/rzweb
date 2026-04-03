@@ -1,7 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, Tabs, TabsList, TabsTrigger, TabsContent, ScrollArea, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui';
 import { useUIStore, useSettingsStore } from '@/stores';
 import { useTheme } from '@/providers';
-import { Settings, Monitor, Terminal, Database, Sliders, Moon, Sun, Laptop } from 'lucide-react';
+import { Settings, Monitor, Terminal, Database, Sliders, Moon, Sun, Laptop, Trash2 } from 'lucide-react';
+import { clearAnalysisCache, getCacheStats, type CacheStats } from '@/lib/rizin';
+import { useState, useEffect } from 'react';
 
 const ANALYSIS_LEVELS = [
   { value: 'aa', label: 'Basic (aa)', description: 'Fast analysis, basic function detection' },
@@ -15,9 +17,18 @@ export function SettingsDialog() {
     terminalFontSize, setTerminalFontSize, 
     terminalScrollback, setTerminalScrollback,
     ioCache, setIoCache,
-    analysisDepth, setAnalysisDepth
+    analysisDepth, setAnalysisDepth,
+    noAnalysis, setNoAnalysis,
+    showLineNumbers, setShowLineNumbers
   } = useSettingsStore();
   const { theme, setTheme } = useTheme();
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+
+  useEffect(() => {
+    if (settingsDialogOpen) {
+      getCacheStats().then(setCacheStats);
+    }
+  }, [settingsDialogOpen]);
 
   return (
     <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
@@ -144,7 +155,7 @@ export function SettingsDialog() {
                         <div className="space-y-0.5">
                           <label className="text-sm font-medium">Enable I/O Cache</label>
                           <p className="text-[10px] text-muted-foreground">
-                            Caches file reads in memory for faster repeated access. Uses Rizin's io.cache setting.
+                            Caches file reads in memory for faster repeated access.
                           </p>
                         </div>
                         <input 
@@ -153,6 +164,55 @@ export function SettingsDialog() {
                           onChange={(e) => setIoCache(e.target.checked)}
                           className="h-4 w-4 rounded border-border"
                         />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium">Skip Auto-Analysis</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Open binaries without running analysis. Use for quick inspection.
+                          </p>
+                        </div>
+                        <input 
+                          type="checkbox" 
+                          checked={noAnalysis} 
+                          onChange={(e) => setNoAnalysis(e.target.checked)}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium">Show Line Numbers</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Display address column in disassembly view.
+                          </p>
+                        </div>
+                        <input 
+                          type="checkbox" 
+                          checked={showLineNumbers} 
+                          onChange={(e) => setShowLineNumbers(e.target.checked)}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                      </div>
+                      <div className="border-t border-border pt-4">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <label className="text-sm font-medium">Analysis Cache</label>
+                            <p className="text-[10px] text-muted-foreground">
+                              {cacheStats ? `${cacheStats.entryCount} cached ${cacheStats.entryCount === 1 ? 'binary' : 'binaries'} (${(cacheStats.totalBytes / 1024 / 1024).toFixed(1)} MB)` : 'Loading...'}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5 text-destructive hover:text-destructive"
+                            onClick={async () => {
+                              await clearAnalysisCache();
+                              setCacheStats({ entryCount: 0, totalBytes: 0, entries: [] });
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Clear
+                          </Button>
+                        </div>
                       </div>
                     </section>
                   </TabsContent>

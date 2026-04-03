@@ -1,4 +1,5 @@
 import type { RizinModule } from './RizinLoader';
+import { computeFileHash, getCachedAnalysis, setCachedAnalysis, type CachedAnalysis } from './analysisCache';
 
 export interface RizinFile {
   name: string;
@@ -20,10 +21,15 @@ export interface AnalysisData {
   info: unknown;
 }
 
-/**
- * @class RizinInstance
- * @brief Wrapper for Rizin WASM module operations
- */
+interface CommandQueueItem {
+  command: string;
+  resolve: (value: string) => void;
+  reject: (error: Error) => void;
+}
+
+const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const BATCH_DELIMITER = '@@RZWEB_DELIM@@';
+
 export class RizinInstance {
   private module: RizinModule;
   private file: RizinFile | null = null;
@@ -35,6 +41,11 @@ export class RizinInstance {
   private workDir = '/work';
   private analysisData: AnalysisData | null = null;
   private filePath: string = '';
+  private analysisCompleted = false;
+  private _fileHash: string = '';
+  private _cacheHit = false;
+  private commandQueue: CommandQueueItem[] = [];
+  private processing = false;
 
   private yield(): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, 0));
@@ -80,6 +91,18 @@ export class RizinInstance {
     return this.analysisData;
   }
 
+  get isAnalysisComplete(): boolean {
+    return this.analysisCompleted;
+  }
+
+  get fileHash(): string {
+    return this._fileHash;
+  }
+
+  get cacheHit(): boolean {
+    return this._cacheHit;
+  }
+
   onOutput(callback: (text: string) => void): () => void {
     this.outputCallbacks.push(callback);
     return () => {
@@ -96,11 +119,8 @@ export class RizinInstance {
     };
   }
 
-  private runCommand(command: string, filePath: string): string {
-    this.stdoutBuffer = [];
-    this.stderrBuffer = [];
-    
-    const args = [
+  private buildArgs(command: string, filePath: string): string[] {
+    return [
       '-e', 'scr.color=0',
       '-e', 'scr.interactive=false',
       '-e', 'scr.prompt=false',
@@ -112,19 +132,36 @@ export class RizinInstance {
       '-c', command,
       filePath,
     ];
+  }
+
+  private runCommand(command: string, filePath: string): string {
+    this.stdoutBuffer = [];
+    this.stderrBuffer = [];
+
+    const args = this.buildArgs(command, filePath);
 
     try {
       this.module.callMain(args);
     } catch {
-      // Command execution failed
     }
 
-    return this.stdoutBuffer.join('\n');
+    const output = this.stdoutBuffer.join('\n');
+    if (output.length > MAX_OUTPUT_BYTES) {
+      return output.substring(0, MAX_OUTPUT_BYTES) + '\n[output truncated at 16MB]';
+    }
+    return output;
+  }
+
+  private runBatchCommands(commands: string[], filePath: string): string[] {
+    const batchCmd = commands
+      .map((cmd, i) => i < commands.length - 1 ? `${cmd};echo ${BATCH_DELIMITER}` : cmd)
+      .join(';');
+    
+    const rawOutput = this.runCommand(batchCmd, filePath);
+    return rawOutput.split(BATCH_DELIMITER).map(s => s.trim());
   }
 
   private sanitizeJSON(jsonStr: string): string {
-    // Comprehensive JSON sanitization for rizin output
-    // Handles: control chars, invalid escapes (\x, \0, etc), high bytes
     let result = '';
     let inString = false;
     let i = 0;
@@ -133,18 +170,15 @@ export class RizinInstance {
       const char = jsonStr[i];
       const code = jsonStr.charCodeAt(i);
       
-      // Handle escape sequences in strings
       if (inString && char === '\\' && i + 1 < jsonStr.length) {
         const nextChar = jsonStr[i + 1];
         
-        // Valid JSON escapes: " \ / b f n r t and uXXXX
-        if ('"\\\/bfnrt'.includes(nextChar)) {
+        if ('"\\\\/bfnrt'.includes(nextChar)) {
           result += char + nextChar;
           i += 2;
           continue;
         }
         
-        // Handle \uXXXX
         if (nextChar === 'u' && i + 5 < jsonStr.length) {
           const hex = jsonStr.substring(i + 2, i + 6);
           if (/^[0-9a-fA-F]{4}$/.test(hex)) {
@@ -154,7 +188,6 @@ export class RizinInstance {
           }
         }
         
-        // Handle \xXX (not valid JSON, convert to \u00XX)
         if (nextChar === 'x' && i + 3 < jsonStr.length) {
           const hex = jsonStr.substring(i + 2, i + 4);
           if (/^[0-9a-fA-F]{2}$/.test(hex)) {
@@ -164,9 +197,7 @@ export class RizinInstance {
           }
         }
         
-        // Handle \0, \1, etc (octal - not valid JSON)
         if (nextChar >= '0' && nextChar <= '7') {
-          // Convert to \u00XX
           let octal = '';
           let j = i + 1;
           while (j < jsonStr.length && j < i + 4 && jsonStr[j] >= '0' && jsonStr[j] <= '7') {
@@ -179,13 +210,11 @@ export class RizinInstance {
           continue;
         }
         
-        // Any other invalid escape - just escape the backslash itself
         result += '\\\\';
         i++;
         continue;
       }
       
-      // Toggle string state on unescaped quotes
       if (char === '"') {
         inString = !inString;
         result += char;
@@ -193,22 +222,18 @@ export class RizinInstance {
         continue;
       }
       
-      // In strings: escape control characters
       if (inString && code <= 0x1F) {
         result += '\\u' + code.toString(16).padStart(4, '0');
         i++;
         continue;
       }
       
-      // In strings: escape high-byte characters that might cause issues
       if (inString && code > 0x7F && code < 0xA0) {
         result += '\\u' + code.toString(16).padStart(4, '0');
         i++;
         continue;
       }
       
-      // OUTSIDE strings: remove newlines/carriage returns that break JSON structure
-      // (These come from stdoutBuffer.join('\n') splitting up values)
       if (!inString && (char === '\n' || char === '\r')) {
         i++;
         continue;
@@ -225,10 +250,8 @@ export class RizinInstance {
     const trimmed = text.trim();
     if (!trimmed) return null;
     
-    // Try to find JSON array starting with [
     const arrayStart = trimmed.indexOf('[');
     if (arrayStart !== -1) {
-      // Find matching closing bracket
       let depth = 0;
       let inString = false;
       let escape = false;
@@ -254,51 +277,14 @@ export class RizinInstance {
         if (depth === 0) {
           const jsonStr = trimmed.substring(arrayStart, i + 1);
           try {
-            // First try direct parse
-            const parsed = JSON.parse(jsonStr);
-            console.log('[RizinInstance:parseJSON] Parsed array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
-            return parsed;
-          } catch (directErr) {
-            // Try with sanitization for control characters
+            return JSON.parse(jsonStr);
+          } catch {
             try {
               const sanitized = this.sanitizeJSON(jsonStr);
-              const parsed = JSON.parse(sanitized);
-              console.log('[RizinInstance:parseJSON] Parsed sanitized array with', Array.isArray(parsed) ? parsed.length : 0, 'items');
-              return parsed;
+              return JSON.parse(sanitized);
             } catch (e: unknown) {
               const err = e as Error;
-              console.log('[RizinInstance:parseJSON] Failed to parse even after sanitization:', err.message);
-              
-              // Extract position from error message
-              const posMatch = err.message.match(/position (\d+)/);
-              if (posMatch) {
-                const pos = parseInt(posMatch[1]);
-                const sanitized = this.sanitizeJSON(jsonStr);
-                const start = Math.max(0, pos - 100);
-                const end = Math.min(sanitized.length, pos + 100);
-                const context = sanitized.substring(start, end);
-                
-                console.log(`[RizinInstance:parseJSON] Error at position ${pos}:`);
-                console.log(`[RizinInstance:parseJSON] Context (${start}-${end}):`);
-                console.log(context);
-                
-                // Show hex codes around error
-                const hexStart = Math.max(0, pos - 20);
-                const hexEnd = Math.min(sanitized.length, pos + 20);
-                const hexChars = [];
-                for (let h = hexStart; h < hexEnd; h++) {
-                  const code = sanitized.charCodeAt(h);
-                  hexChars.push(`${h === pos ? '>>>' : ''}${code.toString(16).padStart(2, '0')}${h === pos ? '<<<' : ''}`);
-                }
-                console.log('[RizinInstance:parseJSON] Hex around error:', hexChars.join(' '));
-                
-                // Show the actual character at error position
-                console.log(`[RizinInstance:parseJSON] Char at ${pos}: "${sanitized[pos]}" (0x${sanitized.charCodeAt(pos).toString(16)})`);
-              }
-              
-              // Log first 500 chars to see structure
-              console.log('[RizinInstance:parseJSON] First 500 chars of sanitized JSON:');
-              console.log(jsonStr.substring(0, 500));
+              console.error('[RizinInstance:parseJSON] Sanitization failed:', err.message);
             }
           }
           break;
@@ -306,7 +292,6 @@ export class RizinInstance {
       }
     }
     
-    // Try object extraction
     const objStart = trimmed.indexOf('{');
     if (objStart !== -1) {
       let depth = 0;
@@ -336,20 +321,21 @@ export class RizinInstance {
           try {
             return JSON.parse(jsonStr);
           } catch {
-            // Continue trying
+            try {
+              return JSON.parse(this.sanitizeJSON(jsonStr));
+            } catch {
+            }
           }
           break;
         }
       }
     }
     
-    // Fallback: simple regex match
     const jsonMatch = trimmed.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
     if (jsonMatch) {
       try {
         return JSON.parse(jsonMatch[1]);
       } catch {
-        // Try parsing each line for a clean JSON line
         const lines = trimmed.split('\n');
         for (const line of lines) {
           const lineTrim = line.trim();
@@ -358,28 +344,23 @@ export class RizinInstance {
             try {
               return JSON.parse(lineTrim);
             } catch {
-              // Continue
             }
           }
         }
       }
     }
     
-    console.log('[RizinInstance:parseJSON] Failed to extract JSON from:', trimmed.substring(0, 200));
     return null;
   }
 
-  /**
-   * @brief Open a binary file for analysis
-   * @param file Binary file data
-   * @param config Optional configuration (ioCache, analysisDepth)
-   */
   async open(file: RizinFile, config?: RizinInstanceConfig): Promise<void> {
     this.close();
     this.file = file;
     this.stdoutBuffer = [];
     this.stderrBuffer = [];
     this._isOpen = true;
+    this.analysisCompleted = false;
+    this._cacheHit = false;
     this.filePath = `${this.workDir}/${file.name}`;
     
     this.analysisData = {
@@ -392,96 +373,93 @@ export class RizinInstance {
     };
 
     try {
-      const fs = this.module.FS;
-      try {
-        fs.mkdir(this.workDir);
-      } catch {
-        // Directory exists
+      this._fileHash = await computeFileHash(file.data);
+
+      const depth = config?.analysisDepth || 2;
+      const cached = await getCachedAnalysis(this._fileHash, depth);
+
+      if (cached) {
+        this.analysisData = { ...cached.data };
+        this.analysisCompleted = true;
+        this._cacheHit = true;
+
+        const fs = this.module.FS;
+        try { fs.mkdir(this.workDir); } catch { }
+        fs.writeFile(this.filePath, file.data);
+        return;
       }
 
+      const fs = this.module.FS;
+      try { fs.mkdir(this.workDir); } catch { }
       fs.writeFile(this.filePath, file.data);
 
-      if (config?.ioCache !== undefined) {
-        this.runCommand(`e io.cache=${config.ioCache}`, this.filePath);
-      }
-
-      // Always run analysis to populate functions
-      // Use lighter analysis for large files to avoid UI freezing
       const AUTO_ANALYZE_THRESHOLD = 1024 * 1024;
       const isLargeFile = file.data.length >= AUTO_ANALYZE_THRESHOLD;
       
       await this.yield();
-      
-      if (isLargeFile) {
-        console.log('[RizinInstance:open] Large file mode - using aF;aflj');
-        const analysisOutput = this.runCommand('aF;aflj', this.filePath);
-        console.log('[RizinInstance:open] aflj output length:', analysisOutput.length);
-        const functions = this.parseJSON(analysisOutput);
-        if (Array.isArray(functions)) {
-          this.analysisData.functions = functions;
-          console.log('[RizinInstance:open] Found', functions.length, 'functions');
-        } else {
-          console.log('[RizinInstance:open] No functions parsed');
-        }
-      } else {
-        const depth = config?.analysisDepth || 1;
-        const analysisCmd = depth >= 3 ? 'aaaa' : (depth >= 2 ? 'aaa' : 'aa');
-        console.log('[RizinInstance:open] Small file mode - using', analysisCmd);
-        const analysisOutput = this.runCommand(`${analysisCmd};aflj`, this.filePath);
-        console.log('[RizinInstance:open] aflj output length:', analysisOutput.length);
-        const functions = this.parseJSON(analysisOutput);
-        if (Array.isArray(functions)) {
-          this.analysisData.functions = functions;
-          console.log('[RizinInstance:open] Found', functions.length, 'functions');
-        } else {
-          console.log('[RizinInstance:open] No functions parsed');
-        }
-      }
+
+      const analysisCmd = isLargeFile
+        ? 'aF'
+        : (() => {
+            return depth >= 3 ? 'aaaa' : (depth >= 2 ? 'aaa' : 'aa');
+          })();
+
+      const ioCacheFlag = config?.ioCache !== undefined ? `e io.cache=${config.ioCache};` : '';
+
+      const commands = [
+        `${ioCacheFlag}${analysisCmd};aflj`,
+        'izzj',
+        'iij',
+        'iEj',
+        'iSj',
+        'ij',
+      ];
+
+      const results = this.runBatchCommands(commands, this.filePath);
 
       await this.yield();
-      console.log('[RizinInstance:open] Running izzj for strings');
-      const stringsOutput = this.runCommand('izzj', this.filePath);
-      console.log('[RizinInstance:open] izzj output length:', stringsOutput.length);
-      const strings = this.parseJSON(stringsOutput);
-      if (Array.isArray(strings)) {
-        this.analysisData.strings = strings;
-        console.log('[RizinInstance:open] Found', strings.length, 'strings');
-      } else {
-        console.log('[RizinInstance:open] No strings parsed');
+
+      if (results[0]) {
+        const functions = this.parseJSON(results[0]);
+        if (Array.isArray(functions)) this.analysisData.functions = functions;
+      }
+      if (results[1]) {
+        const strings = this.parseJSON(results[1]);
+        if (Array.isArray(strings)) this.analysisData.strings = strings;
+      }
+      if (results[2]) {
+        const imports = this.parseJSON(results[2]);
+        if (Array.isArray(imports)) this.analysisData.imports = imports;
+      }
+      if (results[3]) {
+        const exports = this.parseJSON(results[3]);
+        if (Array.isArray(exports)) this.analysisData.exports = exports;
+      }
+      if (results[4]) {
+        const sections = this.parseJSON(results[4]);
+        if (Array.isArray(sections)) this.analysisData.sections = sections;
+      }
+      if (results[5]) {
+        const info = this.parseJSON(results[5]);
+        if (info) this.analysisData.info = info;
       }
 
-      await this.yield();
-      const importsOutput = this.runCommand('iij', this.filePath);
-      const imports = this.parseJSON(importsOutput);
-      if (Array.isArray(imports)) {
-        this.analysisData.imports = imports;
-      }
+      this.analysisCompleted = true;
 
-      await this.yield();
-      const sectionsOutput = this.runCommand('iSj', this.filePath);
-      const sections = this.parseJSON(sectionsOutput);
-      if (Array.isArray(sections)) {
-        this.analysisData.sections = sections;
-      }
+      const serialized = JSON.stringify(this.analysisData);
+      const cacheEntry: CachedAnalysis = {
+        hash: this._fileHash,
+        fileName: file.name,
+        fileSize: file.data.length,
+        timestamp: Date.now(),
+        analysisDepth: depth,
+        dataSize: serialized.length,
+        data: this.analysisData,
+      };
+      setCachedAnalysis(cacheEntry);
     } catch (e) {
       throw e;
     }
-  }
-
-  /**
-   * @brief Check if command needs analysis prefix
-   * @details Scans all semicolon-separated parts for analysis commands
-   */
-  private needsAnalysis(cmd: string): boolean {
-    const analysisCommands = ['pdf', 'afl', 'afn', 'agf', 'agc', 'VV', 'ax', 'af', 'pd '];
-    const parts = cmd.trim().split(';').map(p => p.trim());
-    
-    return parts.some(part => {
-      if (part.startsWith('s ') || part === 's' || part.startsWith('s;')) {
-        return false;
-      }
-      return analysisCommands.some(ac => part.startsWith(ac));
-    });
   }
 
   async executeCommand(command: string): Promise<string> {
@@ -489,12 +467,47 @@ export class RizinInstance {
       return 'Error: No file loaded';
     }
 
-    let finalCmd = command;
-    if (this.needsAnalysis(command) && !command.includes('aa')) {
-      finalCmd = `aa;${command}`;
+    return new Promise<string>((resolve, reject) => {
+      this.commandQueue.push({ command, resolve, reject });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.processing || this.commandQueue.length === 0) return;
+    this.processing = true;
+
+    while (this.commandQueue.length > 0) {
+      const item = this.commandQueue.shift()!;
+      try {
+        let finalCmd = item.command;
+        if (!this.analysisCompleted && this.needsAnalysisPrefix(item.command)) {
+          finalCmd = `aa;${item.command}`;
+        }
+        const result = this.runCommand(finalCmd, this.filePath);
+        item.resolve(result);
+      } catch (e) {
+        item.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+      await this.yield();
     }
 
-    return this.runCommand(finalCmd, this.filePath);
+    this.processing = false;
+  }
+
+  private needsAnalysisPrefix(cmd: string): boolean {
+    const analysisCommands = ['pdf', 'afl', 'afn', 'agf', 'agc', 'VV', 'ax', 'af', 'pd '];
+    const parts = cmd.trim().split(';').map(p => p.trim());
+    
+    return parts.some(part => {
+      if (part.startsWith('s ') || part === 's' || part.startsWith('s;')) {
+        return false;
+      }
+      if (part.startsWith('aa') || part.startsWith('aF')) {
+        return false;
+      }
+      return analysisCommands.some(ac => part.startsWith(ac));
+    });
   }
 
   getLastStderr(): string {
@@ -508,11 +521,11 @@ export class RizinInstance {
   }
 
   async getDisassembly(address: number): Promise<string> {
-    return this.executeCommand(`aa;s ${address};pdfj`);
+    return this.executeCommand(`s ${address};pdfj`);
   }
 
   async getGraph(address: number): Promise<unknown> {
-    const output = await this.executeCommand(`aa;s ${address};agfj`);
+    const output = await this.executeCommand(`s ${address};agfj`);
     return this.parseJSON(output);
   }
 
@@ -532,9 +545,19 @@ export class RizinInstance {
       this._isOpen = false;
       this.stdoutBuffer = [];
       this.stderrBuffer = [];
+      this.commandQueue = [];
+      this.processing = false;
+
+      if (this.filePath && this.module?.FS) {
+        try { this.module.FS.unlink(this.filePath); } catch { }
+      }
+
       this.file = null;
       this.analysisData = null;
       this.filePath = '';
+      this.analysisCompleted = false;
+      this._fileHash = '';
+      this._cacheHit = false;
     }
   }
 }

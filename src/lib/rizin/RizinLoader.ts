@@ -71,10 +71,24 @@ export async function loadRizinModule(
       const modulePromise = new Promise<RizinModule>((resolve, reject) => {
         const stdoutBuffer: number[] = [];
         const stderrBuffer: number[] = [];
+        const CHUNK_SIZE = 8192;
+        const FLUSH_THRESHOLD = 65536;
+        
+        const charsToString = (buf: number[]): string => {
+          if (buf.length <= CHUNK_SIZE) {
+            return String.fromCharCode.apply(null, buf);
+          }
+          const parts: string[] = [];
+          for (let i = 0; i < buf.length; i += CHUNK_SIZE) {
+            const slice = buf.slice(i, Math.min(i + CHUNK_SIZE, buf.length));
+            parts.push(String.fromCharCode.apply(null, slice));
+          }
+          return parts.join('');
+        };
         
         const flushStdout = () => {
           if (stdoutBuffer.length > 0) {
-            const text = String.fromCharCode(...stdoutBuffer);
+            const text = charsToString(stdoutBuffer);
             stdoutBuffer.length = 0;
             const mod = (window as unknown as { Module: RizinModule }).Module;
             mod?._printHandler?.(text);
@@ -83,7 +97,7 @@ export async function loadRizinModule(
         
         const flushStderr = () => {
           if (stderrBuffer.length > 0) {
-            const text = String.fromCharCode(...stderrBuffer);
+            const text = charsToString(stderrBuffer);
             stderrBuffer.length = 0;
             const mod = (window as unknown as { Module: RizinModule }).Module;
             mod?._printErrHandler?.(text);
@@ -106,11 +120,17 @@ export async function loadRizinModule(
                   () => null,
                   (code: number) => {
                     if (code === 10) flushStdout();
-                    else stdoutBuffer.push(code);
+                    else {
+                      stdoutBuffer.push(code);
+                      if (stdoutBuffer.length >= FLUSH_THRESHOLD) flushStdout();
+                    }
                   },
                   (code: number) => {
                     if (code === 10) flushStderr();
-                    else stderrBuffer.push(code);
+                    else {
+                      stderrBuffer.push(code);
+                      if (stderrBuffer.length >= FLUSH_THRESHOLD) flushStderr();
+                    }
                   }
                 );
               }

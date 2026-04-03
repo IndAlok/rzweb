@@ -23,7 +23,6 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(400);
 
-  // Filter valid functions (defensive)
   const validFunctions = useMemo(() => {
     return functions.filter(f => f && typeof f.name === 'string');
   }, [functions]);

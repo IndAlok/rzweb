@@ -35,7 +35,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
     const searchAddonRef = useRef<SearchAddon | null>(null);
     const connectedRef = useRef<RizinInstance | null>(null);
     const inputBuffer = useRef('');
-    const cursorPos = useRef(0);  // Track cursor position within buffer
+    const cursorPos = useRef(0);
     const historyIndex = useRef(-1);
     
     const { terminalFontSize, terminalScrollback, terminalCursorBlink } = useSettingsStore();
@@ -60,26 +60,18 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
         const result = await rz.executeCommand(command);
         const stderr = rz.getLastStderr();
         
-        // Show stderr first (warnings, errors, command help) in yellow
         if (stderr && stderr.trim()) {
-          // Filter out repetitive warnings to reduce noise
           const stderrLines = stderr.split('\n').filter(line => {
             const trimmed = line.trim();
             if (!trimmed) return false;
-            // Skip all log-level messages (INFO, DEBUG, VERBOSE, WARNING)
             if (trimmed.startsWith('INFO:')) return false;
             if (trimmed.startsWith('DEBUG:')) return false;
             if (trimmed.startsWith('VERBOSE:')) return false;
             if (trimmed.startsWith('WARNING:')) return false;
-            // Skip I/O write errors (Emscripten WASM limitation)
-            if (trimmed.includes('write(rz_cons_instance.fdout')) return false;
-            if (trimmed.includes('I/O error') && trimmed.includes('write')) return false;
-            // Skip noisy analysis messages
             if (trimmed.includes('Cannot open directory')) return false;
             if (trimmed.includes('Jump table target is not valid')) return false;
             if (trimmed.includes('No calling convention')) return false;
             if (trimmed.includes('to extract register arguments')) return false;
-            // Skip repetitive warnings but keep ERROR messages and command help
             if (trimmed.includes('Neither hash nor gnu_hash')) return false;
             if (trimmed.includes('rz_config_node_desc: assertion')) return false;
             if (trimmed.includes('rz_config_set:')) return false;
@@ -89,26 +81,23 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           });
           stderrLines.forEach(line => {
             if (line.startsWith('ERROR:')) {
-              term.writeln(`\x1b[31m${line}\x1b[0m`);  // Red for errors
+              term.writeln(`\x1b[31m${line}\x1b[0m`);
             } else if (line.startsWith('Usage:') || line.startsWith('|')) {
-              term.writeln(`\x1b[36m${line}\x1b[0m`);  // Cyan for help
+              term.writeln(`\x1b[36m${line}\x1b[0m`);
             } else {
-              term.writeln(`\x1b[33m${line}\x1b[0m`);  // Yellow for warnings
+              term.writeln(`\x1b[33m${line}\x1b[0m`);
             }
           });
         }
         
-        // Show stdout with pagination for large outputs
         if (result && result.trim()) {
           const LINES_PER_PAGE = 100;
           const allLines = result.split('\n');
           const totalLines = allLines.length;
           
           if (totalLines <= LINES_PER_PAGE) {
-            // Small output - render directly
             allLines.forEach(line => term.writeln(line));
           } else {
-            // Large output - use pagination
             const totalPages = Math.ceil(totalLines / LINES_PER_PAGE);
             
             const renderPage = (page: number) => {
@@ -128,7 +117,6 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
                 term.writeln(`\x1b[35m  [m]\x1b[0m Show more  │  \x1b[35m[a]\x1b[0m Show all  │  \x1b[35m[Enter]\x1b[0m Continue to prompt`);
                 term.writeln(`\x1b[36m────────────────────────────────────────────────────────────\x1b[0m`);
                 
-                // Store pagination state for keyboard handler
                 (term as any)._paginationState = {
                   allLines,
                   currentPage: nextPage,
@@ -137,16 +125,12 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
                   LINES_PER_PAGE,
                   renderPage,
                   renderAll: () => {
-                    // Use chunked async rendering to prevent browser freeze
                     const CHUNK_SIZE = 50;
                     let currentIdx = end;
-                    let cancelled = false;
-                    
-                    // Allow user to cancel with 'q'
                     (term as any)._renderingAll = true;
                     
                     const renderChunk = () => {
-                      if (cancelled || currentIdx >= totalLines) {
+                      if (currentIdx >= totalLines) {
                         term.writeln(`\x1b[36m── End of output (${totalLines} total lines) ──\x1b[0m`);
                         (term as any)._paginationState = null;
                         (term as any)._renderingAll = false;
@@ -159,7 +143,6 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
                       }
                       currentIdx = chunkEnd;
                       
-                      // Show progress every 500 lines
                       if (currentIdx % 500 === 0 && currentIdx < totalLines) {
                         term.writeln(`\x1b[90m... rendered ${currentIdx}/${totalLines} lines (press q to stop) ...\x1b[0m`);
                       }
@@ -199,18 +182,10 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       terminal: terminalRef.current,
       fitAddon: fitAddonRef.current,
       searchAddon: searchAddonRef.current,
-      sendInput: (input: string) => {
-        executeCommand(input);
-      },
-      search: (term: string) => {
-        searchAddonRef.current?.findNext(term);
-      },
-      clearTerminal: () => {
-        terminalRef.current?.clear();
-      },
-      focus: () => {
-        terminalRef.current?.focus();
-      },
+      sendInput: (input: string) => { executeCommand(input); },
+      search: (term: string) => { searchAddonRef.current?.findNext(term); },
+      clearTerminal: () => { terminalRef.current?.clear(); },
+      focus: () => { terminalRef.current?.focus(); },
     }));
 
     useEffect(() => {
@@ -262,9 +237,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
 
       try {
         const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          webglAddon.dispose();
-        });
+        webglAddon.onContextLoss(() => { webglAddon.dispose(); });
         term.loadAddon(webglAddon);
       } catch {}
 
@@ -284,9 +257,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       onReady?.();
 
       const handleResize = () => {
-        try {
-          fitAddon.fit();
-        } catch {}
+        try { fitAddon.fit(); } catch {}
       };
 
       window.addEventListener('resize', handleResize);
@@ -302,9 +273,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       const term = terminalRef.current;
       if (!term || !rizin) return;
       
-      if (connectedRef.current === rizin) {
-        return;
-      }
+      if (connectedRef.current === rizin) return;
       connectedRef.current = rizin;
       
       term.writeln('\x1b[32mConnected to Rizin!\x1b[0m');
@@ -321,29 +290,24 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       showPrompt();
 
       const dataHandler = term.onData((data) => {
-        // Handle pagination controls first
         const paginationState = (term as any)._paginationState;
         if (paginationState) {
           if (data === 'm' || data === 'M') {
-            // Show more - render next page
             term.writeln('');
             paginationState.renderPage(paginationState.currentPage);
             return;
           }
           if (data === 'a' || data === 'A') {
-            // Show all remaining content
             paginationState.renderAll();
             showPrompt();
             return;
           }
           if (data === '\r' || data === '\n') {
-            // Exit pagination, continue to prompt
             (term as any)._paginationState = null;
             term.writeln('');
             showPrompt();
             return;
           }
-          // Ignore other keys during pagination
           return;
         }
         
@@ -361,9 +325,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           if (command) {
             addToHistoryRef.current(command);
             historyIndex.current = -1;
-            executeCommand(command).then(() => {
-              showPrompt();
-            });
+            executeCommand(command).then(() => { showPrompt(); });
           } else {
             showPrompt();
           }
@@ -382,7 +344,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
             showPrompt();
             term.write(cmd);
             inputBuffer.current = cmd;
-            cursorPos.current = cmd.length;  // Cursor at end
+            cursorPos.current = cmd.length;
           }
           return;
         }
@@ -396,7 +358,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
             showPrompt();
             term.write(cmd);
             inputBuffer.current = cmd;
-            cursorPos.current = cmd.length;  // Cursor at end
+            cursorPos.current = cmd.length;
           } else if (historyIndex.current === 0) {
             historyIndex.current = -1;
             term.write('\x1b[2K\r');
@@ -407,57 +369,50 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           return;
         }
 
-        // Left arrow - move cursor left
         if (data === '\x1b[D') {
           if (cursorPos.current > 0) {
             cursorPos.current--;
-            term.write('\x1b[D');  // Move cursor left
+            term.write('\x1b[D');
           }
           return;
         }
 
-        // Right arrow - move cursor right
         if (data === '\x1b[C') {
           if (cursorPos.current < inputBuffer.current.length) {
             cursorPos.current++;
-            term.write('\x1b[C');  // Move cursor right
+            term.write('\x1b[C');
           }
           return;
         }
 
-        // Home key (or Ctrl+A) - move to start
         if (data === '\x1b[H' || data === '\x01') {
           if (cursorPos.current > 0) {
-            term.write(`\x1b[${cursorPos.current}D`);  // Move cursor left by N
+            term.write(`\x1b[${cursorPos.current}D`);
             cursorPos.current = 0;
           }
           return;
         }
 
-        // End key (or Ctrl+E) - move to end
         if (data === '\x1b[F' || data === '\x05') {
           const remaining = inputBuffer.current.length - cursorPos.current;
           if (remaining > 0) {
-            term.write(`\x1b[${remaining}C`);  // Move cursor right by N
+            term.write(`\x1b[${remaining}C`);
             cursorPos.current = inputBuffer.current.length;
           }
           return;
         }
 
-        // Backspace - delete char before cursor
         if (data === '\x7f' || data === '\b') {
           if (cursorPos.current > 0) {
             const before = inputBuffer.current.substring(0, cursorPos.current - 1);
             const after = inputBuffer.current.substring(cursorPos.current);
             inputBuffer.current = before + after;
             cursorPos.current--;
-            // Redraw from cursor: move back, write rest + space, move back
             term.write('\b' + after + ' ' + '\x1b[' + (after.length + 1) + 'D');
           }
           return;
         }
 
-        // Delete key - delete char at cursor
         if (data === '\x1b[3~') {
           if (cursorPos.current < inputBuffer.current.length) {
             const before = inputBuffer.current.substring(0, cursorPos.current);
@@ -468,17 +423,13 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           return;
         }
 
-        if (data === '\t') {
-          return;
-        }
+        if (data === '\t') return;
 
-        // Regular character - insert at cursor position
         if (data >= ' ') {
           const before = inputBuffer.current.substring(0, cursorPos.current);
           const after = inputBuffer.current.substring(cursorPos.current);
           inputBuffer.current = before + data + after;
           cursorPos.current++;
-          // Write char + rest of line, then move cursor back
           term.write(data + after);
           if (after.length > 0) {
             term.write(`\x1b[${after.length}D`);
@@ -495,9 +446,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
     useEffect(() => {
       if (fitAddonRef.current) {
         setTimeout(() => {
-          try {
-            fitAddonRef.current?.fit();
-          } catch {}
+          try { fitAddonRef.current?.fit(); } catch {}
         }, 0);
       }
     }, [className]);

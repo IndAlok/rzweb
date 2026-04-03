@@ -10,7 +10,8 @@ export type ActivePanel =
   | 'exports' 
   | 'sections'
   | 'graph'
-  | 'xrefs';
+  | 'xrefs'
+  | 'info';
 
 export type SidebarTab = 'files' | 'functions' | 'symbols' | 'search';
 

@@ -21,7 +21,6 @@ export function StringsView({ strings, onSelect, className }: StringsViewProps) 
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(400);
 
-  // Filter valid strings (defensive against malformed data)
   const validStrings = useMemo(() => {
     return strings.filter(s => s && typeof s.string === 'string');
   }, [strings]);

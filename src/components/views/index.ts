@@ -3,3 +3,7 @@ export { HexView } from './HexView';
 export { FunctionsView } from './FunctionsView';
 export { StringsView } from './StringsView';
 export { GraphView } from './GraphView';
+export { ImportsView } from './ImportsView';
+export { ExportsView } from './ExportsView';
+export { SectionsView } from './SectionsView';
+export { HeaderInfoPanel } from './HeaderInfoPanel';

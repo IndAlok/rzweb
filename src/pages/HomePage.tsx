@@ -41,7 +41,6 @@ export default function HomePage() {
       });
       navigate(`/analyze?cache=${cacheVersions}`);
     } catch {
-      // File processing error
     } finally {
       setIsProcessing(false);
     }
@@ -49,7 +48,7 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-12 items-center justify-between border-b border-border px-6 bg-card">
+      <header className="flex h-12 items-center justify-between border-b border-border px-4 sm:px-6 bg-card">
         <div className="flex items-center gap-3">
           <Terminal className="h-5 w-5 text-primary" />
           <span className="font-mono font-bold text-primary">RzWeb</span>
@@ -71,10 +70,10 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center p-6">
+      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-2xl">
-          <div className="text-center mb-8">
-            <pre className="text-primary font-mono text-xs leading-tight inline-block">
+          <div className="text-center mb-6 sm:mb-8">
+            <pre className="text-primary font-mono text-[8px] sm:text-xs leading-tight inline-block">
 {`  ____       __        __   _     
  |  _ \\ ____\\ \\      / /__| |__  
  | |_) |_  / \\ \\ /\\ / / _ \\ '_ \\ 
@@ -90,7 +89,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="rounded-lg border border-border bg-card p-6">
+          <div className="rounded-lg border border-border bg-card p-4 sm:p-6">
             <FileDropZone
               onFileSelect={handleFileSelect}
               selectedFile={file}
@@ -117,7 +116,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-3 gap-4">
+          <div className="mt-4 sm:mt-6 grid grid-cols-3 gap-2 sm:gap-4">
             <div className="flex items-center gap-2 text-muted-foreground text-xs font-mono">
               <Cpu className="h-4 w-4 text-primary" />
               <span>WASM Powered</span>
@@ -148,7 +147,7 @@ export default function HomePage() {
         </div>
       </main>
 
-      <footer className="border-t border-border py-3 px-6 bg-card">
+      <footer className="border-t border-border py-3 px-4 sm:px-6 bg-card">
         <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground font-mono">
           <span>
             by{' '}

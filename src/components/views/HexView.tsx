@@ -88,7 +88,7 @@ export function HexView({ data, offset, className }: HexViewProps) {
     const results: number[] = [];
     const query = searchQuery.toLowerCase().replace(/\s/g, '');
     
-    // Search as hex bytes
+
     if (/^[0-9a-f]+$/.test(query) && query.length >= 2) {
       const searchBytes: number[] = [];
       for (let i = 0; i < query.length - (query.length % 2); i += 2) {
@@ -112,7 +112,7 @@ export function HexView({ data, offset, className }: HexViewProps) {
       }
     }
     
-    // Search as ASCII
+
     const queryBytes = new TextEncoder().encode(searchQuery);
     if (queryBytes.length > 0) {
       for (let i = 0; i <= data.length - queryBytes.length; i++) {
