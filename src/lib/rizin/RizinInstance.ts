@@ -141,6 +141,89 @@ function hasUsableAnalysisData(data: AnalysisData | null): boolean {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractDisasmOps(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter(isRecord);
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  if (Array.isArray(value.ops)) {
+    return value.ops.filter(isRecord);
+  }
+
+  if (Array.isArray(value.instructions)) {
+    return value.instructions.filter(isRecord);
+  }
+
+  return [];
+}
+
+function hasUsableDisasmPayload(value: unknown): boolean {
+  return extractDisasmOps(value).length > 0;
+}
+
+function looksLikeGraphBlock(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+
+  return (
+    'offset' in value ||
+    'id' in value ||
+    'jump' in value ||
+    'fail' in value ||
+    Array.isArray(value.ops) ||
+    Array.isArray(value.out_nodes)
+  );
+}
+
+function extractGraphBlocks(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    if (value.every(looksLikeGraphBlock)) {
+      return value.filter(looksLikeGraphBlock);
+    }
+
+    if (value.length > 0 && isRecord(value[0])) {
+      const first = value[0];
+      if (Array.isArray(first.blocks)) {
+        return first.blocks.filter(looksLikeGraphBlock);
+      }
+      if (Array.isArray(first.nodes)) {
+        return first.nodes.filter(looksLikeGraphBlock);
+      }
+    }
+
+    return [];
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  if (Array.isArray(value.blocks)) {
+    return value.blocks.filter(looksLikeGraphBlock);
+  }
+
+  if (Array.isArray(value.nodes)) {
+    return value.nodes.filter(looksLikeGraphBlock);
+  }
+
+  if (isRecord(value.graph)) {
+    return extractGraphBlocks(value.graph);
+  }
+
+  return [];
+}
+
+function hasUsableGraphPayload(value: unknown): boolean {
+  return extractGraphBlocks(value).length > 0;
+}
+
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'binary';
 }
@@ -404,7 +487,7 @@ export class RizinInstance {
   }
 
   private runFunctionDetailCommand(command: string, label: string): RunCommandResult {
-    const needsBootstrapAnalysis = !this.hasNativeSession() && !this.analysisCompleted;
+    const needsBootstrapAnalysis = !this.hasNativeSession();
     const finalCommand = needsBootstrapAnalysis
       ? `${this.getConfiguredAnalysisCommand()};${command}`
       : command;
@@ -417,7 +500,17 @@ export class RizinInstance {
   }
 
   private startNativeFileSession(writeMode = false): boolean {
-    if (!this.ensureNativeSession() || !this.nativeApi || this.nativeSessionId == null || !this.filePath) {
+    if (!this.filePath) {
+      return false;
+    }
+
+    if (!this.ensureNativeSession() || !this.nativeApi || this.nativeSessionId == null) {
+      this.emitNotice({
+        severity: 'warning',
+        code: 'native-session-unavailable',
+        message: 'Persistent native session is unavailable. Falling back to compatibility mode.',
+        detail: 'Disassembly and graph views still work, but switching functions will stay slower until the rzweb session API opens successfully.',
+      });
       return false;
     }
 
@@ -710,6 +803,53 @@ export class RizinInstance {
     return result;
   }
 
+  private tryParseJSONValue(jsonStr: string): unknown[] | unknown | null {
+    try {
+      return JSON.parse(jsonStr);
+    } catch {
+      try {
+        return JSON.parse(this.sanitizeJSON(jsonStr));
+      } catch (e: unknown) {
+        const err = e as Error;
+        console.error('[RizinInstance:parseJSON] Sanitization failed:', err.message);
+        return null;
+      }
+    }
+  }
+
+  private extractBalancedJSON(text: string, startIndex: number, opener: '{' | '['): string | null {
+    const closer = opener === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+      const char = text[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (char === '\\') {
+        escape = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === opener) depth++;
+      if (char === closer) depth--;
+
+      if (depth === 0) {
+        return text.substring(startIndex, i + 1);
+      }
+    }
+
+    return null;
+  }
+
   private parseJSON(text: string): unknown[] | unknown | null {
     const trimmed = text.trim();
     if (!trimmed) return null;
@@ -722,104 +862,40 @@ export class RizinInstance {
       return JSON.parse(trimmed.toLowerCase());
     }
 
-    const arrayStart = trimmed.indexOf('[');
-    if (arrayStart !== -1) {
-      let depth = 0;
-      let inString = false;
-      let escape = false;
-      for (let i = arrayStart; i < trimmed.length; i++) {
-        const char = trimmed[i];
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        if (char === '\\') {
-          escape = true;
-          continue;
-        }
-        if (char === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (inString) continue;
-
-        if (char === '[') depth++;
-        if (char === ']') depth--;
-
-        if (depth === 0) {
-          const jsonStr = trimmed.substring(arrayStart, i + 1);
-          try {
-            return JSON.parse(jsonStr);
-          } catch {
-            try {
-              return JSON.parse(this.sanitizeJSON(jsonStr));
-            } catch (e: unknown) {
-              const err = e as Error;
-              console.error('[RizinInstance:parseJSON] Sanitization failed:', err.message);
-            }
-          }
-          break;
-        }
+    for (let i = 0; i < trimmed.length; i++) {
+      const char = trimmed[i];
+      if (char !== '[' && char !== '{') {
+        continue;
       }
-    }
 
-    const objStart = trimmed.indexOf('{');
-    if (objStart !== -1) {
-      let depth = 0;
-      let inString = false;
-      let escape = false;
-      for (let i = objStart; i < trimmed.length; i++) {
-        const char = trimmed[i];
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        if (char === '\\') {
-          escape = true;
-          continue;
-        }
-        if (char === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (inString) continue;
+      const jsonStr = this.extractBalancedJSON(trimmed, i, char);
+      if (!jsonStr) {
+        continue;
+      }
 
-        if (char === '{') depth++;
-        if (char === '}') depth--;
-
-        if (depth === 0) {
-          const jsonStr = trimmed.substring(objStart, i + 1);
-          try {
-            return JSON.parse(jsonStr);
-          } catch {
-            try {
-              return JSON.parse(this.sanitizeJSON(jsonStr));
-            } catch {
-              // Fall through to the remaining parsers below.
-            }
-          }
-          break;
-        }
+      const parsed = this.tryParseJSONValue(jsonStr);
+      if (parsed !== null) {
+        return parsed;
       }
     }
 
     const jsonMatch = trimmed.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
     if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[1]);
-      } catch {
-        const lines = trimmed.split('\n');
-        for (const line of lines) {
-          const lineTrim = line.trim();
-          if (
-            (lineTrim.startsWith('[') && lineTrim.endsWith(']')) ||
-            (lineTrim.startsWith('{') && lineTrim.endsWith('}'))
-          ) {
-            try {
-              return JSON.parse(lineTrim);
-            } catch {
-              // Keep scanning for a parseable JSON line.
-            }
+      const parsed = this.tryParseJSONValue(jsonMatch[1]);
+      if (parsed !== null) {
+        return parsed;
+      }
+
+      const lines = trimmed.split('\n');
+      for (const line of lines) {
+        const lineTrim = line.trim();
+        if (
+          (lineTrim.startsWith('[') && lineTrim.endsWith(']')) ||
+          (lineTrim.startsWith('{') && lineTrim.endsWith('}'))
+        ) {
+          const lineParsed = this.tryParseJSONValue(lineTrim);
+          if (lineParsed !== null) {
+            return lineParsed;
           }
         }
       }
@@ -1041,7 +1117,14 @@ export class RizinInstance {
 
   private getCachedFunctionDetail(address: number): FunctionDetailCacheEntry | null {
     if (!this.analysisData) return null;
-    return this.analysisData.functionDetails[this.getFunctionDetailKey(address)] ?? null;
+    const cached = this.analysisData.functionDetails[this.getFunctionDetailKey(address)] ?? null;
+    if (!cached) return null;
+
+    return {
+      ...cached,
+      disasm: hasUsableDisasmPayload(cached.disasm) ? cached.disasm : undefined,
+      graph: hasUsableGraphPayload(cached.graph) ? cached.graph : undefined,
+    };
   }
 
   private async persistFunctionDetail(
@@ -1064,7 +1147,7 @@ export class RizinInstance {
   async getFunctionDetails(address: number): Promise<FunctionDetailCacheEntry> {
     const hexAddress = this.getFunctionDetailKey(address);
     const cached = this.getCachedFunctionDetail(address);
-    if (cached?.disasm && cached?.graph) {
+    if (cached && hasUsableDisasmPayload(cached.disasm) && hasUsableGraphPayload(cached.graph)) {
       return cached;
     }
 
@@ -1089,14 +1172,28 @@ export class RizinInstance {
         );
       }
 
-      const detail = await this.persistFunctionDetail(address, {
-        disasm: disasm ?? cached?.disasm,
-        graph: graph ?? cached?.graph,
-      });
+      const nextDisasm = hasUsableDisasmPayload(disasm)
+        ? disasm
+        : hasUsableDisasmPayload(cached?.disasm)
+          ? cached?.disasm
+          : undefined;
+      const nextGraph = hasUsableGraphPayload(graph)
+        ? graph
+        : hasUsableGraphPayload(cached?.graph)
+          ? cached?.graph
+          : undefined;
+
+      const detail =
+        nextDisasm || nextGraph
+          ? await this.persistFunctionDetail(address, {
+              disasm: nextDisasm,
+              graph: nextGraph,
+            })
+          : null;
 
       return detail ?? {
-        disasm: disasm ?? undefined,
-        graph: graph ?? undefined,
+        disasm: nextDisasm,
+        graph: nextGraph,
         updatedAt: Date.now(),
       };
     })();
@@ -1396,7 +1493,7 @@ export class RizinInstance {
           finalCmd = `s ${this.currentAddress};${finalCmd}`;
         }
 
-        const prefixedAnalysis = !this.hasNativeSession() && !this.analysisCompleted && this.needsAnalysisPrefix(finalCmd);
+        const prefixedAnalysis = !this.hasNativeSession() && this.needsAnalysisPrefix(finalCmd);
         if (prefixedAnalysis) {
           finalCmd = `${this.getConfiguredAnalysisCommand()};${finalCmd}`;
         }

@@ -166,12 +166,20 @@ export default function AnalysisPage() {
   }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb, setCurrentAddress, setSelectedFunction]);
 
   const buildDisassemblyLines = useCallback((disasm: unknown): RzDisasmLine[] => {
-    const parsed = disasm as { ops?: any[] } | null;
-    if (!parsed?.ops || !Array.isArray(parsed.ops)) {
+    const parsed = disasm as { ops?: any[]; instructions?: any[] } | any[] | null;
+    const ops = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.ops)
+        ? parsed.ops
+        : Array.isArray(parsed?.instructions)
+          ? parsed.instructions
+          : [];
+
+    if (!ops.length) {
       return [];
     }
 
-    return parsed.ops.map((op: any) => ({
+    return ops.map((op: any) => ({
       offset: op.offset || 0,
       size: op.size || 0,
       bytes: op.bytes || '',
@@ -191,12 +199,18 @@ export default function AnalysisPage() {
     const parsed = graph as any;
 
     let graphBlocks: any[] = [];
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((node: any) => typeof node === 'object' && node && ('offset' in node || 'id' in node || 'jump' in node || 'fail' in node || Array.isArray(node.ops)))) {
+      graphBlocks = parsed;
+    } else if (Array.isArray(parsed) && parsed.length > 0) {
       graphBlocks = parsed[0]?.blocks || parsed[0]?.nodes || [];
     } else if (parsed?.nodes) {
       graphBlocks = parsed.nodes;
     } else if (parsed?.blocks) {
       graphBlocks = parsed.blocks;
+    } else if (parsed?.graph?.nodes) {
+      graphBlocks = parsed.graph.nodes;
+    } else if (parsed?.graph?.blocks) {
+      graphBlocks = parsed.graph.blocks;
     }
 
     if (!graphBlocks.length) {

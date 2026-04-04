@@ -4,7 +4,7 @@ const DB_NAME = 'rzweb-analysis-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'analyses';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
-const CACHE_SCHEMA_VERSION = 5;
+const CACHE_SCHEMA_VERSION = 6;
 
 export interface CachedAnalysis {
   schemaVersion?: number;
