@@ -88,6 +88,17 @@ interface RuntimeConfig {
   maxOutputBytes: number;
 }
 
+interface NativeSessionApi {
+  createSession: () => number;
+  closeSession: (sessionId: number) => number;
+  openFile: (sessionId: number, filePath: string, writeMode: number, ioCache: number) => number;
+  command: (sessionId: number, command: string) => string;
+  getSeek: (sessionId: number) => string;
+  saveProject: (sessionId: number, projectPath: string, compress: number) => number;
+  loadProject: (sessionId: number, projectPath: string, loadBinIo: number) => number;
+  getLastError: (sessionId: number) => string;
+}
+
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const LARGE_BINARY_ALERT_BYTES = 1024 * 1024;
 const MAX_COMMAND_HISTORY_BYTES = 1024;
@@ -130,6 +141,19 @@ function hasUsableAnalysisData(data: AnalysisData | null): boolean {
   );
 }
 
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'binary';
+}
+
+function readFsBytes(module: RizinModule, path: string): Uint8Array | null {
+  try {
+    const value = module.FS.readFile(path);
+    return value instanceof Uint8Array ? value : new Uint8Array(value as unknown as ArrayLike<number>);
+  } catch {
+    return null;
+  }
+}
+
 export class RizinInstance {
   private module: RizinModule;
   private file: RizinFile | null = null;
@@ -152,6 +176,10 @@ export class RizinInstance {
   private activeOutputCapture: ActiveOutputCapture | null = null;
   private pendingFunctionDetailLoads = new Map<string, Promise<FunctionDetailCacheEntry>>();
   private currentAddress = '0x00000000';
+  private projectPath = '';
+  private nativeApi: NativeSessionApi | null = null;
+  private nativeSessionId: number | null = null;
+  private nativeApiChecked = false;
   private runtimeConfig: RuntimeConfig = {
     ioCache: true,
     analysisDepth: 2,
@@ -166,6 +194,8 @@ export class RizinInstance {
 
   constructor(module: RizinModule) {
     this.module = module;
+    this.nativeApi = this.resolveNativeApi();
+    this.nativeApiChecked = true;
 
     this.module._printHandler = (text: string) => {
       const cleaned = this.cleanText(text);
@@ -211,6 +241,240 @@ export class RizinInstance {
       .replace(/ï¿¢ï¾”ï¾Œ/g, '+')
       .replace(/ï¿¢ï¾”ï¾”/g, '+')
       .replace(NON_ASCII_RE, '');
+  }
+
+  private resolveNativeApi(): NativeSessionApi | null {
+    if (this.nativeApiChecked) {
+      return this.nativeApi;
+    }
+
+    const exported = this.module as RizinModule & Record<string, unknown>;
+    if (typeof exported._rzweb_create_session !== 'function') {
+      return null;
+    }
+
+    try {
+      return {
+        createSession: this.module.cwrap('rzweb_create_session', 'number', []) as () => number,
+        closeSession: this.module.cwrap('rzweb_close_session', 'number', ['number']) as (sessionId: number) => number,
+        openFile: this.module.cwrap('rzweb_open_file', 'number', ['number', 'string', 'number', 'number']) as (
+          sessionId: number,
+          filePath: string,
+          writeMode: number,
+          ioCache: number
+        ) => number,
+        command: this.module.cwrap('rzweb_cmd', 'string', ['number', 'string']) as (
+          sessionId: number,
+          command: string
+        ) => string,
+        getSeek: this.module.cwrap('rzweb_get_seek', 'string', ['number']) as (sessionId: number) => string,
+        saveProject: this.module.cwrap('rzweb_save_project', 'number', ['number', 'string', 'number']) as (
+          sessionId: number,
+          projectPath: string,
+          compress: number
+        ) => number,
+        loadProject: this.module.cwrap('rzweb_load_project', 'number', ['number', 'string', 'number']) as (
+          sessionId: number,
+          projectPath: string,
+          loadBinIo: number
+        ) => number,
+        getLastError: this.module.cwrap('rzweb_get_last_error', 'string', ['number']) as (sessionId: number) => string,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private hasNativeSession(): boolean {
+    return this.nativeSessionId != null && this.nativeApi != null;
+  }
+
+  private ensureNativeSession(): boolean {
+    if (!this.nativeApiChecked) {
+      this.nativeApi = this.resolveNativeApi();
+      this.nativeApiChecked = true;
+    }
+
+    if (!this.nativeApi) {
+      return false;
+    }
+
+    if (this.nativeSessionId != null) {
+      return true;
+    }
+
+    const sessionId = this.nativeApi.createSession();
+    if (sessionId <= 0) {
+      return false;
+    }
+
+    this.nativeSessionId = sessionId;
+    return true;
+  }
+
+  private getNativeLastError(): string {
+    if (!this.nativeApi || this.nativeSessionId == null) return '';
+    try {
+      return this.nativeApi.getLastError(this.nativeSessionId) ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  private buildStablePaths(file: RizinFile, hash: string): void {
+    const safeName = sanitizeFileName(file.name);
+    this.filePath = `${this.workDir}/${hash.slice(0, 16)}-${safeName}`;
+    this.projectPath = `${this.workDir}/${hash}.rzdb`;
+  }
+
+  private ensureWorkDir(): void {
+    try {
+      this.module.FS.mkdir(this.workDir);
+    } catch {
+      // The working directory already exists in the in-memory FS.
+    }
+  }
+
+  private finalizeOutput(
+    rawOutput: string,
+    options: RunCommandOptions = {},
+    startedAt: number
+  ): RunCommandResult {
+    const maxOutputBytes = Math.max(options.maxOutputBytes ?? this.runtimeConfig.maxOutputBytes, 1024);
+    let output = rawOutput;
+    let truncated = false;
+
+    if (output.length > maxOutputBytes) {
+      output = `${output.slice(0, maxOutputBytes)}\n[output truncated at ${formatBytes(maxOutputBytes)}]`;
+      truncated = true;
+
+      if (!options.suppressNotice) {
+        const label = options.commandLabel || 'Command output';
+        const limitLabel = formatBytes(maxOutputBytes);
+        this.emitNotice({
+          severity: 'error',
+          code: 'output-truncated',
+          message: `${label} exceeded ${limitLabel} and was truncated.`,
+          detail: 'Increase Max Output Size in Settings for larger binaries or verbose commands.',
+        });
+      }
+    }
+
+    return {
+      output,
+      truncated,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  private runNativeCommand(command: string, options: RunCommandOptions = {}): RunCommandResult {
+    if (!this.nativeApi || this.nativeSessionId == null) {
+      return { output: '', truncated: false, durationMs: 0 };
+    }
+
+    const startedAt = Date.now();
+
+    try {
+      const output = this.nativeApi.command(this.nativeSessionId, command) ?? '';
+      return this.finalizeOutput(this.cleanText(output), options, startedAt);
+    } catch (error) {
+      const detail = this.getNativeLastError();
+      if (!options.suppressNotice) {
+        this.emitNotice({
+          severity: 'error',
+          code: 'native-command-failed',
+          message: options.commandLabel || 'Command execution failed.',
+          detail: detail || (error instanceof Error ? error.message : String(error)),
+        });
+      }
+      return this.finalizeOutput('', options, startedAt);
+    }
+  }
+
+  private runSessionCommand(command: string, options: RunCommandOptions = {}): RunCommandResult {
+    if (this.hasNativeSession()) {
+      return this.runNativeCommand(command, options);
+    }
+
+    if (!this.filePath) {
+      return { output: '', truncated: false, durationMs: 0 };
+    }
+
+    return this.runCommand(command, this.filePath, options);
+  }
+
+  private runFunctionDetailCommand(command: string, label: string): RunCommandResult {
+    const needsBootstrapAnalysis = !this.hasNativeSession() && !this.analysisCompleted;
+    const finalCommand = needsBootstrapAnalysis
+      ? `${this.getConfiguredAnalysisCommand()};${command}`
+      : command;
+
+    return this.runSessionCommand(finalCommand, {
+      context: 'command',
+      commandLabel: label,
+      suppressNotice: true,
+    });
+  }
+
+  private startNativeFileSession(writeMode = false): boolean {
+    if (!this.ensureNativeSession() || !this.nativeApi || this.nativeSessionId == null || !this.filePath) {
+      return false;
+    }
+
+    const opened = this.nativeApi.openFile(
+      this.nativeSessionId,
+      this.filePath,
+      writeMode ? 1 : 0,
+      this.runtimeConfig.ioCache ? 1 : 0
+    );
+
+    if (!opened) {
+      const detail = this.getNativeLastError();
+      this.emitNotice({
+        severity: 'warning',
+        code: 'native-session-open-failed',
+        message: 'Persistent native session could not open this binary. Falling back to command invocations.',
+        detail: detail || 'The WebAssembly module does not expose the native session API yet.',
+      });
+      this.nativeApi = null;
+      this.nativeSessionId = null;
+      return false;
+    }
+
+    this.runNativeCommand(
+      'e scr.color=0;e scr.interactive=false;e scr.prompt=false;e scr.utf8=false;e scr.utf8.curvy=false;e log.level=0;e scr.pager=',
+      { context: 'metadata', commandLabel: 'Native bootstrap', suppressNotice: true }
+    );
+
+    return true;
+  }
+
+  private restoreNativeProject(projectData: Uint8Array | undefined): boolean {
+    if (!projectData || projectData.byteLength === 0 || !this.ensureNativeSession() || !this.projectPath || !this.nativeApi || this.nativeSessionId == null) {
+      return false;
+    }
+
+    try {
+      this.module.FS.writeFile(this.projectPath, projectData);
+    } catch {
+      return false;
+    }
+
+    const loaded = this.nativeApi.loadProject(this.nativeSessionId, this.projectPath, 1);
+    return !!loaded;
+  }
+
+  private async persistNativeProject(): Promise<Uint8Array | null> {
+    if (!this.hasNativeSession() || !this.nativeApi || this.nativeSessionId == null || !this.projectPath) {
+      return null;
+    }
+
+    const saved = this.nativeApi.saveProject(this.nativeSessionId, this.projectPath, 0);
+    if (!saved) {
+      return null;
+    }
+
+    return readFsBytes(this.module, this.projectPath);
   }
 
   get isOpen(): boolean {
@@ -564,62 +828,6 @@ export class RizinInstance {
     return null;
   }
 
-  private parseJSONSequence(text: string): unknown[] {
-    const values: unknown[] = [];
-    const trimmed = text.trim();
-    if (!trimmed) return values;
-
-    let index = 0;
-
-    while (index < trimmed.length) {
-      while (index < trimmed.length && trimmed[index] !== '{' && trimmed[index] !== '[') {
-        index++;
-      }
-
-      if (index >= trimmed.length) {
-        break;
-      }
-
-      const opener = trimmed[index];
-      const closer = opener === '{' ? '}' : ']';
-      const start = index;
-      let depth = 0;
-      let inString = false;
-      let escape = false;
-
-      for (; index < trimmed.length; index++) {
-        const char = trimmed[index];
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        if (char === '\\') {
-          escape = true;
-          continue;
-        }
-        if (char === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (inString) continue;
-
-        if (char === opener) depth++;
-        if (char === closer) depth--;
-
-        if (depth === 0) {
-          const parsed = this.parseJSON(trimmed.slice(start, index + 1));
-          if (parsed !== null) {
-            values.push(parsed);
-          }
-          index++;
-          break;
-        }
-      }
-    }
-
-    return values;
-  }
-
   private parseAddressLiteral(expr: string): number | null {
     const trimmed = expr.trim();
     if (!trimmed) return null;
@@ -747,7 +955,7 @@ export class RizinInstance {
     let sawTruncation = false;
 
     for (const command of commands) {
-      const result = this.runCommand(command, this.filePath, {
+      const result = this.runSessionCommand(command, {
         context: 'metadata',
         commandLabel: label,
         suppressNotice: true,
@@ -866,13 +1074,20 @@ export class RizinInstance {
     }
 
     const loadPromise = (async () => {
-      const output = await this.executeCommand(
-        `pdfj @ ${hexAddress};s ${hexAddress};agf json`
+      this.currentAddress = hexAddress;
+
+      const disasmResult = this.runFunctionDetailCommand(`s ${hexAddress};pdfj`, 'Function disassembly');
+      const disasm = this.parseJSON(disasmResult.output);
+
+      let graph = this.parseJSON(
+        this.runFunctionDetailCommand(`s ${hexAddress};agfj`, 'Function graph').output
       );
 
-      const parsedValues = this.parseJSONSequence(output);
-      const disasm = parsedValues[0] ?? null;
-      const graph = parsedValues[1] ?? null;
+      if (graph == null) {
+        graph = this.parseJSON(
+          this.runFunctionDetailCommand(`s ${hexAddress};agf json`, 'Function graph').output
+        );
+      }
 
       const detail = await this.persistFunctionDetail(address, {
         disasm: disasm ?? cached?.disasm,
@@ -896,15 +1111,23 @@ export class RizinInstance {
   }
 
   private refreshCurrentAddress(): void {
-    if (!this.filePath) return;
+    const output = this.hasNativeSession()
+      ? this.runNativeCommand('s', {
+          context: 'metadata',
+          commandLabel: 'Current seek',
+          suppressNotice: true,
+          maxOutputBytes: 1024,
+        }).output
+      : this.filePath
+        ? this.runCommand('s', this.filePath, {
+            context: 'metadata',
+            commandLabel: 'Current seek',
+            suppressNotice: true,
+            maxOutputBytes: 1024,
+          }).output
+        : '';
 
-    const result = this.runCommand('s', this.filePath, {
-      context: 'metadata',
-      commandLabel: 'Current seek',
-      suppressNotice: true,
-      maxOutputBytes: 1024,
-    });
-    const match = result.output.trim().match(/^(0x[0-9a-fA-F]+)/);
+    const match = output.trim().match(/^(0x[0-9a-fA-F]+)/);
     if (match) {
       this.currentAddress = match[1];
     }
@@ -924,9 +1147,12 @@ export class RizinInstance {
     }
 
     if (plan.refreshFunctions) {
+      const functionCommands = this.hasNativeSession()
+        ? ['aflj']
+        : [`${this.getConfiguredAnalysisCommand()};aflj`];
       const result = this.loadArrayIntoAnalysis(
         'functions',
-        [`${this.getConfiguredAnalysisCommand()};aflj`],
+        functionCommands,
         'Functions'
       );
       changed = changed || result.loaded;
@@ -991,14 +1217,16 @@ export class RizinInstance {
     if (cacheIsBlocked) return;
 
     const serialized = JSON.stringify(this.analysisData);
+    const projectData = await this.persistNativeProject();
     const cacheEntry: CachedAnalysis = {
       hash: this._fileHash,
       fileName: this.file.name,
       fileSize: this.file.data.length,
       timestamp: Date.now(),
       analysisDepth: this.runtimeConfig.analysisDepth,
-      dataSize: serialized.length,
+      dataSize: serialized.length + (projectData?.byteLength ?? 0),
       complete: true,
+      projectData: projectData ?? undefined,
       data: this.analysisData,
     };
     await setCachedAnalysis(cacheEntry);
@@ -1012,7 +1240,6 @@ export class RizinInstance {
     this._isOpen = true;
     this.analysisCompleted = false;
     this._cacheHit = false;
-    this.filePath = `${this.workDir}/${file.name}`;
     this.currentAddress = '0x00000000';
     this.notices = [];
     this.runtimeConfig = {
@@ -1034,6 +1261,9 @@ export class RizinInstance {
     };
 
     this._fileHash = await computeFileHash(file.data);
+    this.buildStablePaths(file, this._fileHash);
+    this.ensureWorkDir();
+    this.module.FS.writeFile(this.filePath, file.data);
 
     const cached = await getCachedAnalysis(this._fileHash, this.runtimeConfig.analysisDepth);
     if (cached) {
@@ -1041,28 +1271,42 @@ export class RizinInstance {
         ...cached.data,
         functionDetails: cached.data.functionDetails ?? {},
       };
-      this.analysisCompleted = true;
       this._cacheHit = true;
+    }
 
-      const cachedFs = this.module.FS;
-      try {
-        cachedFs.mkdir(this.workDir);
-      } catch {
-        // The working directory already exists in the in-memory FS.
+    if (this.ensureNativeSession() && this.restoreNativeProject(cached?.projectData)) {
+      this.analysisCompleted = true;
+      this.refreshCurrentAddress();
+
+      if (!hasUsableAnalysisData(this.analysisData)) {
+        const refreshResult = await this.refreshAnalysisData({
+          markAnalysisComplete: true,
+          refreshFunctions: true,
+          refreshStrings: true,
+          refreshImports: true,
+          refreshExports: true,
+          refreshSections: true,
+          refreshInfo: true,
+        });
+
+        if (!refreshResult.truncated) {
+          await this.persistCurrentAnalysis();
+        }
+      } else {
+        this.emitAnalysisChanged();
       }
-      cachedFs.writeFile(this.filePath, file.data);
+
+      return;
+    }
+
+    if (cached && !this.hasNativeSession()) {
+      this.analysisCompleted = true;
       this.refreshCurrentAddress();
       this.emitAnalysisChanged();
       return;
     }
 
-    const fs = this.module.FS;
-    try {
-      fs.mkdir(this.workDir);
-    } catch {
-      // The working directory already exists in the in-memory FS.
-    }
-    fs.writeFile(this.filePath, file.data);
+    const nativeSessionReady = this.startNativeFileSession();
     this.refreshCurrentAddress();
 
     if (file.data.length >= LARGE_BINARY_ALERT_BYTES) {
@@ -1076,7 +1320,16 @@ export class RizinInstance {
 
     let truncated = false;
 
-    if (!this.runtimeConfig.noAnalysis) {
+    if (nativeSessionReady && !this.runtimeConfig.noAnalysis) {
+      const analysisResult = this.runNativeCommand(this.getConfiguredAnalysisCommand(), {
+        context: 'analysis',
+        commandLabel: 'Initial analysis',
+        suppressNotice: true,
+      });
+      truncated = truncated || analysisResult.truncated;
+      this.analysisCompleted = true;
+      await this.yield();
+    } else if (!this.runtimeConfig.noAnalysis) {
       const functionsResult = this.loadArrayIntoAnalysis(
         'functions',
         [`${this.getConfiguredAnalysisCommand()};aflj`],
@@ -1103,7 +1356,7 @@ export class RizinInstance {
 
     const refreshResult = await this.refreshAnalysisData({
       markAnalysisComplete: this.analysisCompleted,
-      refreshFunctions: false,
+      refreshFunctions: nativeSessionReady && !this.runtimeConfig.noAnalysis,
       refreshStrings: true,
       refreshImports: true,
       refreshExports: true,
@@ -1143,12 +1396,12 @@ export class RizinInstance {
           finalCmd = `s ${this.currentAddress};${finalCmd}`;
         }
 
-        const prefixedAnalysis = this.needsAnalysisPrefix(finalCmd);
+        const prefixedAnalysis = !this.hasNativeSession() && !this.analysisCompleted && this.needsAnalysisPrefix(finalCmd);
         if (prefixedAnalysis) {
           finalCmd = `${this.getConfiguredAnalysisCommand()};${finalCmd}`;
         }
 
-        const result = this.runCommand(finalCmd, this.filePath, {
+        const result = this.runSessionCommand(finalCmd, {
           context: 'command',
           commandLabel: 'Command output',
         });
@@ -1161,7 +1414,11 @@ export class RizinInstance {
           refreshPlan.markAnalysisComplete = true;
         }
         const refreshResult = await this.refreshAnalysisData(refreshPlan);
-        if (refreshPlan.markAnalysisComplete && !refreshResult.truncated) {
+        const shouldPersist =
+          !refreshResult.truncated &&
+          (this.hasNativeSession() || refreshPlan.markAnalysisComplete);
+
+        if (shouldPersist) {
           await this.persistCurrentAnalysis();
         }
       } catch (e) {
@@ -1223,6 +1480,14 @@ export class RizinInstance {
 
   close(): void {
     if (this._isOpen) {
+      if (this.nativeApi && this.nativeSessionId != null) {
+        try {
+          this.nativeApi.closeSession(this.nativeSessionId);
+        } catch {
+          // Ignore native session teardown failures during cleanup.
+        }
+      }
+
       this._isOpen = false;
       this.stdoutBuffer = [];
       this.stderrBuffer = [];
@@ -1239,14 +1504,24 @@ export class RizinInstance {
         }
       }
 
+      if (this.projectPath && this.module?.FS) {
+        try {
+          this.module.FS.unlink(this.projectPath);
+        } catch {
+          // The project file may not exist yet in the in-memory FS.
+        }
+      }
+
       this.file = null;
       this.analysisData = null;
       this.filePath = '';
+      this.projectPath = '';
       this.analysisCompleted = false;
       this._fileHash = '';
       this._cacheHit = false;
       this.notices = [];
       this.currentAddress = '0x00000000';
+      this.nativeSessionId = null;
     }
   }
 }

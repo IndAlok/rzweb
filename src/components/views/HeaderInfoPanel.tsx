@@ -30,19 +30,39 @@ function isSizeKey(key: string): boolean {
   return lower.includes('size') || lower.endsWith('sz') || lower === 'block';
 }
 
-function formatValue(key: string, value: unknown, bits = 64): string {
+function isHexString(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-f]+$/i.test(value);
+}
+
+function formatAddressValue(value: number | string, bits: number, compact: boolean): string {
+  const full = typeof value === 'number' ? formatAddress(value, bits) : value;
+  if (!compact || full.length <= 16) return full;
+  return `${full.slice(0, 10)}...${full.slice(-6)}`;
+}
+
+function formatValue(
+  key: string,
+  value: unknown,
+  bits = 64,
+  options: { compactAddresses?: boolean } = {}
+): string {
+  const compactAddresses = options.compactAddresses ?? false;
+
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') {
-    if (isAddressKey(key)) return formatAddress(value, bits);
+    if (isAddressKey(key)) return formatAddressValue(value, bits, compactAddresses);
     if (isSizeKey(key) && value > 0) return `${formatSize(value)} (${value})`;
     return value.toLocaleString();
+  }
+  if (isAddressKey(key) && isHexString(value)) {
+    return formatAddressValue(value, bits, compactAddresses);
   }
   if (Array.isArray(value)) {
     const primitiveItems = value.every(
       item => item == null || ['string', 'number', 'boolean'].includes(typeof item)
     );
     return primitiveItems
-      ? value.map(item => formatValue(key, item, bits)).join(', ')
+      ? value.map(item => formatValue(key, item, bits, options)).join(', ')
       : `${value.length.toLocaleString()} items`;
   }
   if (value && typeof value === 'object') {
@@ -151,7 +171,7 @@ function ArraySection({
                 key={`${title}-${index}`}
                 className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 font-mono text-xs text-foreground"
               >
-                {formatValue('value', item, bits)}
+                {formatValue('value', item, bits, { compactAddresses: true })}
               </div>
             );
           }
@@ -167,19 +187,13 @@ function ArraySection({
                   <InfoRow
                     key={key}
                     label={prettyLabel(key)}
-                    value={formatValue(key, value, bits)}
+                    value={formatValue(key, value, bits, { compactAddresses: true })}
                   />
                 ))}
               </div>
             </div>
           );
         })}
-
-        {items.length > visibleItems.length && (
-          <p className="text-xs text-muted-foreground">
-            Showing the first {visibleItems.length.toLocaleString()} items to keep the panel responsive.
-          </p>
-        )}
       </div>
     </section>
   );

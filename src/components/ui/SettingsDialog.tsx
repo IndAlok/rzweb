@@ -1,8 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, Tabs, TabsList, TabsTrigger, TabsContent, ScrollArea, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui';
-import { useUIStore, useSettingsStore } from '@/stores';
+import { useFileStore, useUIStore, useSettingsStore } from '@/stores';
 import { useTheme } from '@/providers';
 import { Settings, Monitor, Terminal, Database, Sliders, Moon, Sun, Laptop, Trash2 } from 'lucide-react';
-import { clearAnalysisCache, getCacheStats, type CacheStats } from '@/lib/rizin';
+import { clearAnalysisCache, computeFileHash, getCacheStats, removeCachedAnalysis, type CacheStats } from '@/lib/rizin';
 import { useState, useEffect } from 'react';
 
 const ANALYSIS_LEVELS = [
@@ -13,6 +13,7 @@ const ANALYSIS_LEVELS = [
 
 export function SettingsDialog() {
   const { settingsDialogOpen, setSettingsDialogOpen } = useUIStore();
+  const { currentFile } = useFileStore();
   const { 
     terminalFontSize, setTerminalFontSize, 
     terminalScrollback, setTerminalScrollback,
@@ -24,6 +25,7 @@ export function SettingsDialog() {
   } = useSettingsStore();
   const { theme, setTheme } = useTheme();
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [clearingCurrentCache, setClearingCurrentCache] = useState(false);
 
   useEffect(() => {
     if (settingsDialogOpen) {
@@ -213,24 +215,45 @@ export function SettingsDialog() {
                         />
                       </div>
                       <div className="border-t border-border pt-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-3">
                           <div className="space-y-0.5">
                             <label className="text-sm font-medium">Analysis Cache</label>
                             <p className="text-[10px] text-muted-foreground">
                               {cacheStats ? `${cacheStats.entryCount} cached ${cacheStats.entryCount === 1 ? 'binary' : 'binaries'} (${(cacheStats.totalBytes / 1024 / 1024).toFixed(1)} MB)` : 'Loading...'}
                             </p>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5 text-destructive hover:text-destructive"
-                            onClick={async () => {
-                              await clearAnalysisCache();
-                              setCacheStats({ entryCount: 0, totalBytes: 0, entries: [] });
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" /> Clear
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            {currentFile && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={clearingCurrentCache}
+                                onClick={async () => {
+                                  setClearingCurrentCache(true);
+                                  try {
+                                    const hash = await computeFileHash(currentFile.data);
+                                    await removeCachedAnalysis(hash);
+                                    setCacheStats(await getCacheStats());
+                                  } finally {
+                                    setClearingCurrentCache(false);
+                                  }
+                                }}
+                              >
+                                Clear Current Binary
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5 text-destructive hover:text-destructive"
+                              onClick={async () => {
+                                await clearAnalysisCache();
+                                setCacheStats({ entryCount: 0, totalBytes: 0, entries: [] });
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Clear All
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     </section>

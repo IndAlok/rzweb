@@ -4,7 +4,7 @@ const DB_NAME = 'rzweb-analysis-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'analyses';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
-const CACHE_SCHEMA_VERSION = 4;
+const CACHE_SCHEMA_VERSION = 5;
 
 export interface CachedAnalysis {
   schemaVersion?: number;
@@ -15,6 +15,7 @@ export interface CachedAnalysis {
   analysisDepth: number;
   dataSize: number;
   complete?: boolean;
+  projectData?: Uint8Array;
   data: {
     functions: unknown[];
     strings: unknown[];
@@ -28,6 +29,10 @@ export interface CachedAnalysis {
       updatedAt: number;
     }>;
   };
+}
+
+function hasProjectData(entry: CachedAnalysis): boolean {
+  return entry.projectData instanceof Uint8Array && entry.projectData.byteLength > 0;
 }
 
 export interface CacheStats {
@@ -70,6 +75,7 @@ export async function computeFileHash(data: Uint8Array): Promise<string> {
 function isClearlyIncomplete(entry: CachedAnalysis): boolean {
   if ((entry.schemaVersion ?? 0) < CACHE_SCHEMA_VERSION) return true;
   if (entry.complete === false) return true;
+  if (hasProjectData(entry)) return false;
 
   const { data } = entry;
   return (
