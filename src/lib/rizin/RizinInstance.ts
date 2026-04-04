@@ -117,6 +117,12 @@ interface NativeSessionApi {
   getCommandCatalog?: (sessionId: number) => string;
 }
 
+interface CommandTokenBounds {
+  start: number;
+  end: number;
+  fragment: string;
+}
+
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const LARGE_BINARY_ALERT_BYTES = 1024 * 1024;
 const MAX_COMMAND_HISTORY_BYTES = 1024;
@@ -240,6 +246,13 @@ function extractGraphBlocks(value: unknown): Record<string, unknown>[] {
 
 function hasUsableGraphPayload(value: unknown): boolean {
   return extractGraphBlocks(value).length > 0;
+}
+
+function compareAutocompleteValues(a: string, b: string): number {
+  if (a.length !== b.length) {
+    return a.length - b.length;
+  }
+  return a.localeCompare(b);
 }
 
 function sanitizeFileName(name: string): string {
@@ -630,41 +643,36 @@ export class RizinInstance {
   }
 
   getAutocomplete(input: string, cursorPos: number, maxResults: number): RizinAutocompleteResult | null {
-    if (!this.hasNativeSession() || !this.nativeApi || !this.nativeApi.autocomplete || this.nativeSessionId == null) {
-      return null;
-    }
-
     const safeInput = input.slice(0, 4095);
     const safeCursorPos = Math.max(0, Math.min(cursorPos, safeInput.length));
     const safeMaxResults = Math.max(1, Math.min(maxResults, 100));
+    if (this.hasNativeSession() && this.nativeApi?.autocomplete && this.nativeSessionId != null) {
+      try {
+        const raw = this.nativeApi.autocomplete(this.nativeSessionId, safeInput, safeCursorPos, safeMaxResults);
+        const parsed = this.parseJSON(raw);
+        if (isRecord(parsed) && Array.isArray(parsed.options)) {
+          const options = parsed.options
+            .filter((option): option is string => typeof option === 'string' && option.length > 0)
+            .slice(0, safeMaxResults);
 
-    try {
-      const raw = this.nativeApi.autocomplete(this.nativeSessionId, safeInput, safeCursorPos, safeMaxResults);
-      const parsed = this.parseJSON(raw);
-      if (!isRecord(parsed) || !Array.isArray(parsed.options)) {
-        return null;
+          if (options.length > 0) {
+            const start = typeof parsed.start === 'number' ? parsed.start : safeCursorPos;
+            const end = typeof parsed.end === 'number' ? parsed.end : safeCursorPos;
+
+            return {
+              start: Math.max(0, Math.min(start, safeInput.length)),
+              end: Math.max(0, Math.min(Math.max(end, start), safeInput.length)),
+              endString: typeof parsed.endString === 'string' ? parsed.endString : '',
+              options,
+            };
+          }
+        }
+      } catch {
+        // Fall back to command-catalog completion below.
       }
-
-      const options = parsed.options
-        .filter((option): option is string => typeof option === 'string' && option.length > 0)
-        .slice(0, safeMaxResults);
-
-      if (options.length === 0) {
-        return null;
-      }
-
-      const start = typeof parsed.start === 'number' ? parsed.start : safeCursorPos;
-      const end = typeof parsed.end === 'number' ? parsed.end : safeCursorPos;
-
-      return {
-        start: Math.max(0, Math.min(start, safeInput.length)),
-        end: Math.max(0, Math.min(Math.max(end, start), safeInput.length)),
-        endString: typeof parsed.endString === 'string' ? parsed.endString : '',
-        options,
-      };
-    } catch {
-      return null;
     }
+
+    return this.buildCommandAutocompleteFallback(safeInput, safeCursorPos, safeMaxResults);
   }
 
   getCommandCatalog(): Record<string, RizinCommandHelpEntry> {
@@ -672,33 +680,13 @@ export class RizinInstance {
       return this.commandCatalogCache;
     }
 
-    if (!this.hasNativeSession() || !this.nativeApi || !this.nativeApi.getCommandCatalog || this.nativeSessionId == null) {
-      return {};
+    let catalog = this.loadCommandCatalogFromNative();
+    if (!catalog || Object.keys(catalog).length === 0) {
+      catalog = this.loadCommandCatalogFromHelpSearch();
     }
 
-    try {
-      const raw = this.nativeApi.getCommandCatalog(this.nativeSessionId);
-      const parsed = this.parseJSON(raw);
-      if (!isRecord(parsed)) {
-        return {};
-      }
-
-      const catalog: Record<string, RizinCommandHelpEntry> = {};
-      for (const [name, value] of Object.entries(parsed)) {
-        if (!isRecord(value)) continue;
-        catalog[name] = {
-          name,
-          summary: typeof value.summary === 'string' ? value.summary : undefined,
-          description: typeof value.description === 'string' ? value.description : undefined,
-          args: typeof value.args === 'string' ? value.args : undefined,
-        };
-      }
-
-      this.commandCatalogCache = catalog;
-      return catalog;
-    } catch {
-      return {};
-    }
+    this.commandCatalogCache = catalog ?? {};
+    return this.commandCatalogCache;
   }
 
   get allNotices(): RizinNotice[] {
@@ -756,6 +744,181 @@ export class RizinInstance {
 
   private emitAnalysisChanged(): void {
     this.analysisCallbacks.forEach(cb => cb());
+  }
+
+  private normalizeCommandCatalog(parsed: unknown): Record<string, RizinCommandHelpEntry> {
+    const catalog: Record<string, RizinCommandHelpEntry> = {};
+
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        if (!isRecord(entry)) continue;
+        const name =
+          typeof entry.name === 'string'
+            ? entry.name
+            : typeof entry.cmd === 'string'
+              ? entry.cmd
+              : '';
+        if (!name) continue;
+
+        catalog[name] = {
+          name,
+          summary: typeof entry.summary === 'string' ? entry.summary : undefined,
+          description: typeof entry.description === 'string' ? entry.description : undefined,
+          args:
+            typeof entry.args === 'string'
+              ? entry.args
+              : typeof entry.args_str === 'string'
+                ? entry.args_str
+                : undefined,
+        };
+      }
+
+      return catalog;
+    }
+
+    if (!isRecord(parsed)) {
+      return catalog;
+    }
+
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!isRecord(value)) continue;
+      const name =
+        typeof value.name === 'string'
+          ? value.name
+          : typeof value.cmd === 'string'
+            ? value.cmd
+            : key;
+      if (!name) continue;
+
+      catalog[name] = {
+        name,
+        summary: typeof value.summary === 'string' ? value.summary : undefined,
+        description: typeof value.description === 'string' ? value.description : undefined,
+        args:
+          typeof value.args === 'string'
+            ? value.args
+            : typeof value.args_str === 'string'
+              ? value.args_str
+              : undefined,
+      };
+    }
+
+    return catalog;
+  }
+
+  private loadCommandCatalogFromNative(): Record<string, RizinCommandHelpEntry> | null {
+    if (!this.hasNativeSession() || !this.nativeApi?.getCommandCatalog || this.nativeSessionId == null) {
+      return null;
+    }
+
+    try {
+      const raw = this.nativeApi.getCommandCatalog(this.nativeSessionId);
+      const parsed = this.parseJSON(raw);
+      const catalog = this.normalizeCommandCatalog(parsed);
+      return Object.keys(catalog).length > 0 ? catalog : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private loadCommandCatalogFromHelpSearch(): Record<string, RizinCommandHelpEntry> | null {
+    if (!this._isOpen || !this.filePath) {
+      return null;
+    }
+
+    const result = this.runSessionCommand('?*j', {
+      context: 'metadata',
+      commandLabel: 'Command catalog',
+      maxOutputBytes: Math.max(this.runtimeConfig.maxOutputBytes, 4 * 1024 * 1024),
+      suppressNotice: true,
+    });
+    if (result.truncated) {
+      return null;
+    }
+
+    const parsed = this.parseJSON(result.output);
+    const catalog = this.normalizeCommandCatalog(parsed);
+    return Object.keys(catalog).length > 0 ? catalog : null;
+  }
+
+  private getCommandTokenBounds(input: string, cursorPos: number): CommandTokenBounds | null {
+    if (!input) {
+      return null;
+    }
+
+    let segmentStart = 0;
+    for (let i = Math.max(0, cursorPos - 1); i >= 0; i--) {
+      const char = input[i];
+      if (char === ';' || char === '|' || char === '\n' || char === '\r') {
+        segmentStart = i + 1;
+        break;
+      }
+    }
+
+    while (segmentStart < input.length && /\s/.test(input[segmentStart] ?? '')) {
+      segmentStart++;
+    }
+
+    if (segmentStart >= input.length || cursorPos < segmentStart) {
+      return null;
+    }
+
+    const left = input.slice(segmentStart, cursorPos);
+    if (/\s/.test(left)) {
+      return null;
+    }
+
+    let end = cursorPos;
+    while (end < input.length) {
+      const char = input[end];
+      if (!char || /\s/.test(char) || char === ';' || char === '|' || char === '\n' || char === '\r') {
+        break;
+      }
+      end++;
+    }
+
+    return {
+      start: segmentStart,
+      end,
+      fragment: input.slice(segmentStart, cursorPos),
+    };
+  }
+
+  private buildCommandAutocompleteFallback(
+    input: string,
+    cursorPos: number,
+    maxResults: number
+  ): RizinAutocompleteResult | null {
+    const bounds = this.getCommandTokenBounds(input, cursorPos);
+    if (!bounds || !bounds.fragment) {
+      return null;
+    }
+
+    const catalog = this.getCommandCatalog();
+    const commandNames = Object.keys(catalog);
+    if (commandNames.length === 0) {
+      return null;
+    }
+
+    const query = bounds.fragment.toLowerCase();
+    const prefixMatches = commandNames
+      .filter(name => name.toLowerCase().startsWith(query))
+      .sort(compareAutocompleteValues);
+    const substringMatches = commandNames
+      .filter(name => !name.toLowerCase().startsWith(query) && name.toLowerCase().includes(query))
+      .sort(compareAutocompleteValues);
+
+    const options = [...prefixMatches, ...substringMatches].slice(0, maxResults);
+    if (options.length === 0) {
+      return null;
+    }
+
+    return {
+      start: bounds.start,
+      end: bounds.end,
+      endString: ' ',
+      options,
+    };
   }
 
   private buildArgs(command: string, filePath: string): string[] {

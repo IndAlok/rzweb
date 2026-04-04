@@ -37,43 +37,43 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-      <DialogContent className="max-w-2xl h-[500px] flex flex-col p-0 overflow-hidden">
-        <DialogHeader className="p-6 border-b border-border shrink-0">
+      <DialogContent className="flex h-[min(92vh,640px)] w-[calc(100vw-1rem)] max-w-3xl flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border p-4 sm:p-6">
           <DialogTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5 text-primary" />
             Settings
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 flex overflow-hidden">
-          <Tabs defaultValue="general" orientation="vertical" className="flex w-full h-full">
-            <TabsList className="w-48 h-full flex flex-col items-stretch justify-start bg-muted/30 p-2 rounded-none border-r border-border shrink-0">
-              <TabsTrigger value="general" className="justify-start gap-2 h-9">
+        <div className="flex flex-1 overflow-hidden">
+          <Tabs defaultValue="general" className="flex h-full w-full flex-col md:flex-row">
+            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-muted/30 p-2 md:h-full md:w-52 md:flex-col md:items-stretch md:justify-start md:overflow-visible md:border-b-0 md:border-r md:p-2">
+              <TabsTrigger value="general" className="h-9 shrink-0 justify-start gap-2">
                 <Monitor className="h-4 w-4" /> General
               </TabsTrigger>
-              <TabsTrigger value="terminal" className="justify-start gap-2 h-9">
+              <TabsTrigger value="terminal" className="h-9 shrink-0 justify-start gap-2">
                 <Terminal className="h-4 w-4" /> Terminal
               </TabsTrigger>
-              <TabsTrigger value="analysis" className="justify-start gap-2 h-9">
+              <TabsTrigger value="analysis" className="h-9 shrink-0 justify-start gap-2">
                 <Sliders className="h-4 w-4" /> Analysis
               </TabsTrigger>
-              <TabsTrigger value="io" className="justify-start gap-2 h-9">
+              <TabsTrigger value="io" className="h-9 shrink-0 justify-start gap-2">
                 <Database className="h-4 w-4" /> I/O & Storage
               </TabsTrigger>
             </TabsList>
 
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
-                <div className="p-6 space-y-6">
+                <div className="space-y-6 p-4 sm:p-6">
                   <TabsContent value="general" className="m-0 space-y-4">
                     <section>
                       <h4 className="text-sm font-semibold mb-3">Theme</h4>
-                      <div className="flex gap-2">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                         <Button
                           variant={theme === 'light' ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => setTheme('light')}
-                          className="flex-1"
+                          className="w-full"
                         >
                           <Sun className="h-4 w-4 mr-2" /> Light
                         </Button>
@@ -81,7 +81,7 @@ export function SettingsDialog() {
                           variant={theme === 'dark' ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => setTheme('dark')}
-                          className="flex-1"
+                          className="w-full"
                         >
                           <Moon className="h-4 w-4 mr-2" /> Dark
                         </Button>
@@ -89,7 +89,7 @@ export function SettingsDialog() {
                           variant={theme === 'system' ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => setTheme('system')}
-                          className="flex-1"
+                          className="w-full"
                         >
                           <Laptop className="h-4 w-4 mr-2" /> System
                         </Button>
@@ -145,9 +145,9 @@ export function SettingsDialog() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
-                          <label className="text-sm font-medium">Autocomplete Results</label>
+                          <label className="text-sm font-medium">Max Results Returned</label>
                           <p className="text-[10px] text-muted-foreground">
-                            Caps the number of completion suggestions shown in the terminal popup.
+                            Caps the terminal autocomplete list. Fewer matches may appear when fewer commands match what you typed.
                           </p>
                         </div>
                         <Select value={terminalAutocompleteMaxResults.toString()} onValueChange={(v) => setTerminalAutocompleteMaxResults(parseInt(v))}>
@@ -253,14 +253,14 @@ export function SettingsDialog() {
                         />
                       </div>
                       <div className="border-t border-border pt-4">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="space-y-0.5">
                             <label className="text-sm font-medium">Analysis Cache</label>
                             <p className="text-[10px] text-muted-foreground">
                               {cacheStats ? `${cacheStats.entryCount} cached ${cacheStats.entryCount === 1 ? 'binary' : 'binaries'} (${(cacheStats.totalBytes / 1024 / 1024).toFixed(1)} MB)` : 'Loading...'}
                             </p>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             {currentFile && (
                               <Button
                                 variant="outline"
@@ -302,7 +302,7 @@ export function SettingsDialog() {
           </Tabs>
         </div>
 
-        <div className="p-4 border-t border-border flex justify-end shrink-0 bg-muted/30">
+        <div className="shrink-0 border-t border-border bg-muted/30 p-4 flex justify-end">
           <Button onClick={() => setSettingsDialogOpen(false)}>Done</Button>
         </div>
       </DialogContent>

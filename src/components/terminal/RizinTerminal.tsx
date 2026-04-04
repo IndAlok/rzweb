@@ -286,6 +286,9 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
 
       const replacementStart = Math.max(0, Math.min(result.start, inputBuffer.current.length));
       const replacementEnd = Math.max(replacementStart, Math.min(result.end, inputBuffer.current.length));
+      if (Object.keys(commandCatalogRef.current).length === 0) {
+        commandCatalogRef.current = rz.getCommandCatalog?.() ?? {};
+      }
       const suggestions = result.options.map(value => ({
         value,
         meta: commandCatalogRef.current[value],
@@ -771,7 +774,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
               })}
             </div>
             <div className="border-t border-slate-800 px-3 py-2 text-[10px] font-mono text-slate-500">
-              Tab completes. Arrow keys browse. Enter accepts only after selection.
+              Tab completes. Arrow keys browse. Enter accepts only after selection. The list shows up to your configured max.
             </div>
           </div>
         )}

@@ -1,85 +1,85 @@
 # RzWeb
 
-A browser-based reverse engineering platform that runs Rizin entirely in your browser through WebAssembly. No installations, no uploads, no servers - just drop a binary and start analyzing.
+RzWeb is a browser-based reverse engineering interface powered by Rizin compiled to WebAssembly. Drop a binary into the app and analyze it locally in your browser with a persistent session, terminal access, cached re-open support, and dedicated views for the main analysis surfaces.
 
 ## Screenshots
 
-**Homepage** - Drop a binary and start analyzing
+**Homepage**
 
 ![Homepage](public/Homepage.png)
 
-**Terminal** - Full Rizin CLI access
+**Terminal**
 
 ![Terminal](public/Terminal.png)
 
-**Disassembly** - Syntax-highlighted assembly view
+**Disassembly**
 
 ![Disassembly](public/Disassembly.png)
 
-**Control Flow Graph** - Visual function structure
+**Control Flow Graph**
 
 ![Graph](public/Graph.png)
 
-**Hex Dump** - Raw byte inspection
+**Hex Dump**
 
 ![Hex Dump](public/HexDump.png)
 
-**Strings** - Extracted strings from the binary
+**Strings**
 
 ![Strings](public/Strings.png)
 
-## What It Does
+**Imports**
 
-RzWeb brings the full power of Rizin to your browser. You get a complete terminal where you can run any Rizin command, plus dedicated views for disassembly, control flow graphs, hex dumps, and strings. Everything processes locally on your machine - your files never leave your device.
+![Imports](public/Imports.png)
 
-### Terminal
+**Exports**
 
-The integrated terminal gives you direct access to Rizin's CLI. Run `pdf` to disassemble a function, `afl` to list all functions, `px` to dump hex, or any other command you would use in a normal Rizin session. Commands can be chained with semicolons like `s main;pdf`.
+![Exports](public/Exports.png)
 
-### Disassembly
+**Sections**
 
-Syntax-highlighted assembly with address navigation. Click on addresses to jump around, see cross-references, and track your current position in the binary.
+![Sections](public/Sections.png)
 
-### Control Flow Graphs
+**Binary Info**
 
-Visual representation of function structure. See how basic blocks connect, identify loops, and understand the control flow at a glance.
+![Binary Info](public/BinInfo.png)
 
-### Hex View
+## Highlights
 
-Raw byte inspection. Navigate to any offset and examine the binary data directly.
-
-### Strings
-
-Automatically extracted strings from the binary. Useful for finding hardcoded paths, error messages, encryption keys, and other interesting data.
+- Persistent Rizin sessions through the paired `rzwasi` build, so analysis state, seeks, and follow-up commands stay live inside the same binary session.
+- Full terminal access with live command autocomplete, `Tab` completion, arrow-key selection, and configurable minimum characters and max results returned.
+- Dedicated views for disassembly, control-flow graphs, hex, strings, imports, exports, sections, and binary information.
+- Analysis caching keyed by binary hash, including direct reopen from the homepage when binary data is stored in the cache.
+- Configurable command output limits and warning banners for oversized binaries or truncated metadata.
+- Responsive layout tuned for both desktop and mobile usage.
 
 ## Supported Formats
 
-RzWeb supports everything Rizin supports:
+RzWeb follows the formats supported by the bundled Rizin build, including:
 
-- **ELF** - Linux executables and shared libraries
-- **PE/PE+** - Windows executables and DLLs
-- **Mach-O** - macOS and iOS binaries
-- **Raw** - Firmware, dumps, anything else
+- ELF
+- PE / PE+
+- Mach-O
+- Raw firmware and byte dumps
 
-## How to Use
+## How It Works
 
-1. Visit the live deployment
-2. Drop your binary file onto the page
-3. Click Analyze
-4. Use the terminal or switch between views
+1. Open the app.
+2. Drop or pick a binary.
+3. Analyze it with the configured depth.
+4. Move between the terminal and structured views, or reopen the same cached binary later from the homepage.
+
+Everything runs locally in the browser. Files stay on the device and are loaded into WebAssembly memory and browser storage only.
 
 ## Privacy
 
-All analysis happens in your browser. The binary is loaded into WebAssembly memory and never sent anywhere. You can even cache the WASM module and use RzWeb offline.
+RzWeb does not upload binaries to a server. Analysis, caching, and reopening happen entirely in the browser via WebAssembly, IndexedDB, and the in-memory filesystem exposed by Emscripten.
 
-## Limitations
+## Browser Constraints
 
-These are inherent to running in a browser environment:
-
-- **Stateless commands** - Each command runs as a fresh Rizin invocation. Use semicolons to chain commands that depend on each other, like `s 0x1000;pdf`.
-- **Single-threaded** - WebAssembly is single-threaded, so analysis of large binaries takes time.
-- **No debugger** - ptrace is not available in browsers.
-- **Large files** - Files over 1MB skip auto-analysis to prevent browser hangs. You can run `aa` manually.
+- Debugging features that require `ptrace` are unavailable in browser sandboxes.
+- Analysis is still single-threaded WebAssembly work, so very large binaries can take time.
+- Available functionality ultimately depends on the capabilities exported by the current `rzwasi` build.
 
 ## Building Locally
 
@@ -92,7 +92,7 @@ npm run dev
 
 ## Architecture
 
-The frontend is React with TypeScript and Tailwind CSS. State management uses Zustand. The terminal is powered by xterm.js. Rizin is compiled to WebAssembly using Emscripten and loaded from the companion [rzwasi](https://github.com/IndAlok/rzwasi) repository.
+The frontend uses React, TypeScript, Tailwind CSS, Zustand, and xterm.js. The reverse engineering core comes from the companion [rzwasi](https://github.com/IndAlok/rzwasi) repository, which builds Rizin to WebAssembly and exposes both the traditional CLI entrypoint and the persistent `rzweb_*` session API used by RzWeb.
 
 ## Credits
 

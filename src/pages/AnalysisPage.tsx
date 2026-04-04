@@ -358,69 +358,76 @@ export default function AnalysisPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <header className="flex h-12 shrink-0 items-center gap-1 sm:gap-2 border-b border-border bg-card px-2 sm:px-4 overflow-hidden">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon-sm" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={handleGoHome} title="Back to Home">
-            <Home className="h-4 w-4" />
-          </Button>
-          <div className="hidden sm:flex items-center gap-2">
-            <TerminalIcon className="h-5 w-5 text-primary" />
-            <span className="font-bold text-sm tracking-tight text-foreground">RzWeb</span>
+      <header className="shrink-0 border-b border-border bg-card">
+        <div className="flex items-center gap-2 px-2 py-2 sm:px-4">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Button variant="ghost" size="icon-sm" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={handleGoHome} title="Back to Home">
+              <Home className="h-4 w-4" />
+            </Button>
+            <div className="hidden items-center gap-2 sm:flex">
+              <TerminalIcon className="h-5 w-5 text-primary" />
+              <span className="text-sm font-bold tracking-tight text-foreground">RzWeb</span>
+            </div>
+            <TerminalIcon className="h-5 w-5 text-primary sm:hidden" />
           </div>
-          <TerminalIcon className="sm:hidden h-5 w-5 text-primary" />
-        </div>
 
-        <div className="h-6 w-px bg-border mx-1 sm:mx-2 hidden sm:block" />
-
-        <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hidden">
-          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
-            <TabsList className="h-8 bg-muted/50 flex-nowrap">
-              <TabsTrigger value="terminal" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <TerminalIcon className="h-3.5 w-3.5" /><span className="hidden sm:inline">Terminal</span>
-              </TabsTrigger>
-              <TabsTrigger value="disasm" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Code className="h-3.5 w-3.5" /><span className="hidden sm:inline">Disasm</span>
-              </TabsTrigger>
-              <TabsTrigger value="hex" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Layout className="h-3.5 w-3.5" /><span className="hidden sm:inline">Hex</span>
-              </TabsTrigger>
-              <TabsTrigger value="strings" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Quote className="h-3.5 w-3.5" /><span className="hidden sm:inline">Strings</span>
-              </TabsTrigger>
-              <TabsTrigger value="graph" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Share2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Graph</span>
-              </TabsTrigger>
-              <TabsTrigger value="imports" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Package className="h-3.5 w-3.5" /><span className="hidden sm:inline">Imports</span>
-              </TabsTrigger>
-              <TabsTrigger value="exports" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <ArrowUpRight className="h-3.5 w-3.5" /><span className="hidden sm:inline">Exports</span>
-              </TabsTrigger>
-              <TabsTrigger value="sections" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Layers className="h-3.5 w-3.5" /><span className="hidden sm:inline">Sections</span>
-              </TabsTrigger>
-              <TabsTrigger value="info" className="text-xs gap-1 sm:gap-1.5 px-1.5 sm:px-3">
-                <Info className="h-3.5 w-3.5" /><span className="hidden sm:inline">Info</span>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-
-        <div className="ml-auto flex items-center gap-1 sm:gap-2 shrink-0">
           {currentFile && (
-            <Badge variant="outline" className="hidden md:flex gap-1.5 font-mono text-[10px] py-1 border-primary/20 bg-primary/5">
-              <FileCode className="h-3 w-3 text-primary" /> {currentFile.name}
+            <Badge
+              variant="outline"
+              className="ml-1 hidden max-w-[40vw] truncate border-primary/20 bg-primary/5 py-1 text-[10px] font-mono md:flex"
+            >
+              <FileCode className="mr-1.5 h-3 w-3 shrink-0 text-primary" />
+              <span className="truncate">{currentFile.name}</span>
             </Badge>
           )}
-          <Button variant="ghost" size="icon-sm" onClick={() => setSettingsDialogOpen(true)} title="Settings">
-            <Settings className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={handleGoHome} title="Exit">
-            <X className="h-4 w-4 text-destructive" />
-          </Button>
+
+          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+            <Button variant="ghost" size="icon-sm" onClick={() => setSettingsDialogOpen(true)} title="Settings">
+              <Settings className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={handleGoHome} title="Exit">
+              <X className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="border-t border-border/70 px-2 py-2 sm:px-4">
+          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
+            <div className="overflow-x-auto scrollbar-hidden">
+              <TabsList className="h-9 min-w-max justify-start bg-muted/50">
+                <TabsTrigger value="terminal" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <TerminalIcon className="h-3.5 w-3.5" /><span>Terminal</span>
+                </TabsTrigger>
+                <TabsTrigger value="disasm" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Code className="h-3.5 w-3.5" /><span>Disasm</span>
+                </TabsTrigger>
+                <TabsTrigger value="hex" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Layout className="h-3.5 w-3.5" /><span>Hex</span>
+                </TabsTrigger>
+                <TabsTrigger value="strings" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Quote className="h-3.5 w-3.5" /><span>Strings</span>
+                </TabsTrigger>
+                <TabsTrigger value="graph" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Share2 className="h-3.5 w-3.5" /><span>Graph</span>
+                </TabsTrigger>
+                <TabsTrigger value="imports" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Package className="h-3.5 w-3.5" /><span>Imports</span>
+                </TabsTrigger>
+                <TabsTrigger value="exports" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <ArrowUpRight className="h-3.5 w-3.5" /><span>Exports</span>
+                </TabsTrigger>
+                <TabsTrigger value="sections" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Layers className="h-3.5 w-3.5" /><span>Sections</span>
+                </TabsTrigger>
+                <TabsTrigger value="info" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Info className="h-3.5 w-3.5" /><span>Info</span>
+                </TabsTrigger>
+              </TabsList>
+            </div>
+          </Tabs>
         </div>
       </header>
 
@@ -500,16 +507,18 @@ export default function AnalysisPage() {
         </PanelGroup>
       </div>
 
-      <footer className="flex h-6 shrink-0 items-center justify-between border-t border-border bg-card px-2 sm:px-4 text-[10px] text-muted-foreground">
-        <div className="flex items-center gap-4">
+      <footer className="shrink-0 border-t border-border bg-card px-2 py-1.5 text-[10px] text-muted-foreground sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <div className="flex items-center gap-1.5">
             <div className={cn("h-2 w-2 rounded-full", activeInstance ? "bg-green-500" : "bg-muted")} />
             {activeInstance ? "Ready" : "Loading"}
           </div>
           <div className="tabular-nums">0x{currentAddress.toString(16).padStart(8, '0')}</div>
           {selectedFunction && <div className="text-primary">{selectedFunction}</div>}
+          </div>
+          <div>RzWeb</div>
         </div>
-        <div>RzWeb</div>
       </footer>
 
       <CommandPalette />
