@@ -98,4 +98,4 @@ The frontend uses React, TypeScript, Tailwind CSS, Zustand, and xterm.js. The re
 
 Built by [IndAlok](https://github.com/IndAlok)
 
-Powered by [Rizin](https://rizin.re), the open-source reverse engineering framework.
+Powered by [Rizin](https://rizin.re), the open-source Reverse Engineering framework.
