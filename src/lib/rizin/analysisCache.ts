@@ -12,6 +12,7 @@ export interface CachedAnalysis {
   timestamp: number;
   analysisDepth: number;
   dataSize: number;
+  complete?: boolean;
   data: {
     functions: unknown[];
     strings: unknown[];
@@ -52,6 +53,20 @@ export async function computeFileHash(data: Uint8Array): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function isClearlyIncomplete(entry: CachedAnalysis): boolean {
+  if (entry.complete === false) return true;
+
+  const { data } = entry;
+  return (
+    data.functions.length === 0 &&
+    data.strings.length === 0 &&
+    data.imports.length === 0 &&
+    data.exports.length === 0 &&
+    data.sections.length === 0 &&
+    data.info == null
+  );
+}
+
 export async function getCachedAnalysis(
   hash: string,
   analysisDepth: number
@@ -62,6 +77,10 @@ export async function getCachedAnalysis(
 
     if (!entry) return null;
     if (entry.analysisDepth < analysisDepth) return null;
+    if (isClearlyIncomplete(entry)) {
+      await db.delete(STORE_NAME, hash);
+      return null;
+    }
 
     return entry;
   } catch {
@@ -75,6 +94,7 @@ export async function setCachedAnalysis(entry: CachedAnalysis): Promise<void> {
     await db.put(STORE_NAME, entry);
     await evictIfNeeded(db);
   } catch {
+    // IndexedDB writes are best-effort; analysis can still continue without a cache write.
   }
 }
 
@@ -117,6 +137,7 @@ export async function clearAnalysisCache(): Promise<void> {
     const db = await getDB();
     await db.clear(STORE_NAME);
   } catch {
+    // Ignore cache-clear failures and leave the current session untouched.
   }
 }
 
@@ -125,5 +146,6 @@ export async function removeCachedAnalysis(hash: string): Promise<void> {
     const db = await getDB();
     await db.delete(STORE_NAME, hash);
   } catch {
+    // Ignore cache-delete failures; stale entries will be skipped when detected later.
   }
 }

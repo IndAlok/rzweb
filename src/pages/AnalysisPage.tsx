@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 
 import { useFileStore, useRizinStore, useUIStore, useSettingsStore } from '@/stores';
-import { loadRizinModule, getCachedVersions, RizinInstance } from '@/lib/rizin';
+import { loadRizinModule, getCachedVersions, RizinInstance, type RizinNotice } from '@/lib/rizin';
 import { RizinTerminal, type RizinTerminalRef } from '@/components/terminal';
 import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel } from '@/components/views';
 import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info } from 'lucide-react';
+import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle } from 'lucide-react';
 import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection, RzBinInfo } from '@/types/rizin';
 
 export default function AnalysisPage() {
@@ -21,46 +21,74 @@ export default function AnalysisPage() {
   const { currentFile, clearCurrentFile } = useFileStore();
   const { setModule, isLoading, setLoading, loadProgress, setLoadProgress, loadPhase, setLoadPhase, setLoadMessage, setCachedVersions, setError } = useRizinStore();
   const { sidebarOpen, setSidebarOpen, setSettingsDialogOpen, currentAddress, setCurrentAddress, currentView, setCurrentView, selectedFunction, setSelectedFunction } = useUIStore();
-  const { ioCache, analysisDepth } = useSettingsStore();
+  const { ioCache, analysisDepth, noAnalysis, maxOutputSizeMb } = useSettingsStore();
 
   const [activeInstance, setActiveInstance] = useState<RizinInstance | null>(null);
   const [analysisReady, setAnalysisReady] = useState(false);
+  const [analysisRevision, setAnalysisRevision] = useState(0);
+  const [alerts, setAlerts] = useState<RizinNotice[]>([]);
   const [disasmLines, setDisasmLines] = useState<RzDisasmLine[]>([]);
   const [isLoadingDisasm, setIsLoadingDisasm] = useState(false);
   const [graphNodes, setGraphNodes] = useState<Array<{id: string; label: string; body?: string}>>([]);
   const [graphEdges, setGraphEdges] = useState<Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}>>([]);
   const terminalRef = useRef<RizinTerminalRef>(null);
 
-  const functions = useMemo<RzFunction[]>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return [];
-    return activeInstance.analysis.functions as RzFunction[];
-  }, [activeInstance, analysisReady]);
+  void analysisRevision;
 
-  const strings = useMemo<RzString[]>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return [];
-    return activeInstance.analysis.strings as RzString[];
-  }, [activeInstance, analysisReady]);
+  const functions = !activeInstance?.analysis || !analysisReady
+    ? []
+    : activeInstance.analysis.functions as RzFunction[];
 
-  const imports = useMemo<RzImport[]>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return [];
-    return activeInstance.analysis.imports as RzImport[];
-  }, [activeInstance, analysisReady]);
+  const strings = !activeInstance?.analysis || !analysisReady
+    ? []
+    : activeInstance.analysis.strings as RzString[];
 
-  const exports = useMemo<RzExport[]>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return [];
-    return activeInstance.analysis.exports as RzExport[];
-  }, [activeInstance, analysisReady]);
+  const imports = !activeInstance?.analysis || !analysisReady
+    ? []
+    : activeInstance.analysis.imports as RzImport[];
 
-  const sections = useMemo<RzSection[]>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return [];
-    return activeInstance.analysis.sections as RzSection[];
-  }, [activeInstance, analysisReady]);
+  const exports = !activeInstance?.analysis || !analysisReady
+    ? []
+    : activeInstance.analysis.exports as RzExport[];
 
-  const binInfo = useMemo<RzBinInfo | null>(() => {
-    if (!activeInstance?.analysis || !analysisReady) return null;
-    const info = activeInstance.analysis.info as any;
-    return info?.core?.info || info?.info || info || null;
-  }, [activeInstance, analysisReady]);
+  const sections = !activeInstance?.analysis || !analysisReady
+    ? []
+    : activeInstance.analysis.sections as RzSection[];
+
+  const binInfo = !activeInstance?.analysis || !analysisReady
+    ? null
+    : ((activeInstance.analysis.info as any)?.core?.info ||
+      (activeInstance.analysis.info as any)?.info ||
+      activeInstance.analysis.info ||
+      null) as RzBinInfo | null;
+
+  useEffect(() => {
+    if (!activeInstance) {
+      setAlerts([]);
+      return;
+    }
+
+    setAlerts(activeInstance.allNotices);
+
+    const unsubscribeAnalysis = activeInstance.onAnalysisChanged(() => {
+      setAnalysisReady(true);
+      setAnalysisRevision(v => v + 1);
+    });
+
+    const unsubscribeNotice = activeInstance.onNotice((notice) => {
+      setAlerts(prev => {
+        if (prev.some(item => item.code === notice.code && item.message === notice.message && item.detail === notice.detail)) {
+          return prev;
+        }
+        return [...prev, notice];
+      });
+    });
+
+    return () => {
+      unsubscribeAnalysis();
+      unsubscribeNotice();
+    };
+  }, [activeInstance]);
 
   useEffect(() => {
     if (!currentFile) {
@@ -74,6 +102,8 @@ export default function AnalysisPage() {
       setLoading(true);
       setLoadPhase('initializing');
       setLoadProgress(0);
+      setAlerts([]);
+      setAnalysisRevision(0);
 
       try {
         const rizinModule = await loadRizinModule({
@@ -89,19 +119,25 @@ export default function AnalysisPage() {
         setCachedVersions(versions);
 
         rz = new RizinInstance(rizinModule);
+        setLoadPhase('analyzing');
+        setLoadProgress(78);
+        setLoadMessage(noAnalysis ? 'Opening binary without auto-analysis...' : 'Running initial analysis and indexing binary data...');
         await rz.open(currentFile, {
           ioCache,
           analysisDepth,
+          noAnalysis,
+          maxOutputBytes: maxOutputSizeMb * 1024 * 1024,
           extraArgs: ['-e', 'scr.color=0', '-e', 'scr.utf8=false'],
         });
 
         setActiveInstance(rz);
         setAnalysisReady(true);
+        setAlerts(rz.allNotices);
         setLoadPhase('ready');
         if (rz.cacheHit) {
           toast.success('Loaded from analysis cache');
         } else {
-          toast.success(`Analysis complete`);
+          toast.success(noAnalysis ? 'Binary opened' : 'Analysis complete');
         }
 
       } catch (error) {
@@ -119,7 +155,7 @@ export default function AnalysisPage() {
     return () => {
       rz?.close();
     };
-  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth]);
+  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb]);
 
   const fetchDisassembly = useCallback(async (address: number) => {
     if (!activeInstance) return;
@@ -244,9 +280,13 @@ export default function AnalysisPage() {
           <TerminalIcon className="h-16 w-16 animate-pulse text-primary" />
         </div>
         <h2 className="mb-2 text-2xl font-semibold text-foreground">
-          {loadPhase === 'downloading' ? 'Downloading Rizin...' : 'Initializing...'}
+          {loadPhase === 'downloading' ? 'Downloading Rizin...' : loadPhase === 'analyzing' ? 'Analyzing Binary...' : 'Initializing...'}
         </h2>
-        <p className="mb-6 text-muted-foreground">Please wait</p>
+        <p className="mb-6 max-w-md text-center text-muted-foreground">
+          {loadPhase === 'analyzing'
+            ? 'Initial analysis is being completed now so functions, strings, sections, and graphs are ready without manual aa; ... chaining.'
+            : 'Please wait'}
+        </p>
         <div className="w-80"><Progress value={loadProgress} showValue /></div>
       </div>
     );
@@ -319,6 +359,34 @@ export default function AnalysisPage() {
           </Button>
         </div>
       </header>
+
+      {alerts.length > 0 && (
+        <div className="border-b border-border bg-background px-3 py-2 sm:px-4">
+          <div className="space-y-2">
+            {alerts.map((alert) => (
+              <div
+                key={alert.id}
+                className={cn(
+                  'rounded-md border px-3 py-2 text-sm',
+                  alert.severity === 'error'
+                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                    : alert.severity === 'warning'
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200'
+                      : 'border-primary/30 bg-primary/10 text-foreground'
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-medium">{alert.message}</p>
+                    {alert.detail && <p className="mt-1 text-xs opacity-80">{alert.detail}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden">
         <PanelGroup direction="horizontal">

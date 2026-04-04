@@ -18,6 +18,7 @@ export function SettingsDialog() {
     terminalScrollback, setTerminalScrollback,
     ioCache, setIoCache,
     analysisDepth, setAnalysisDepth,
+    maxOutputSizeMb, setMaxOutputSizeMb,
     noAnalysis, setNoAnalysis,
     showLineNumbers, setShowLineNumbers
   } = useSettingsStore();
@@ -144,6 +145,24 @@ export function SettingsDialog() {
                         </Select>
                         <p className="text-xs text-muted-foreground mt-2">
                           Analysis runs when opening a binary. Higher levels take longer but detect more functions.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium block mb-2">Max Command Output</label>
+                        <Select value={maxOutputSizeMb.toString()} onValueChange={(v) => setMaxOutputSizeMb(parseInt(v))}>
+                          <SelectTrigger className="w-full h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[4, 8, 16, 32, 64].map(size => (
+                              <SelectItem key={size} value={size.toString()}>
+                                {size} MB
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Larger values keep more output for huge binaries and long listings, but use more browser memory.
                         </p>
                       </div>
                     </section>

@@ -11,6 +11,7 @@ interface SettingsState {
   analysisDepth: number;
   ioCache: boolean;
   autoAnalysis: boolean;
+  maxOutputSizeMb: number;
   showLineNumbers: boolean;
   hexBytesPerRow: number;
   defaultVersion: string;
@@ -28,6 +29,7 @@ interface SettingsState {
   setAnalysisDepth: (depth: number) => void;
   setIoCache: (enabled: boolean) => void;
   setAutoAnalysis: (enabled: boolean) => void;
+  setMaxOutputSizeMb: (size: number) => void;
   setShowLineNumbers: (show: boolean) => void;
   setHexBytesPerRow: (bytes: number) => void;
   setDefaultVersion: (version: string) => void;
@@ -48,6 +50,7 @@ const defaultSettings = {
   analysisDepth: 2,
   ioCache: true,
   autoAnalysis: false,
+  maxOutputSizeMb: 16,
   showLineNumbers: true,
   hexBytesPerRow: 16,
   defaultVersion: 'latest',
@@ -71,6 +74,7 @@ export const useSettingsStore = create<SettingsState>()(
       setAnalysisDepth: (analysisDepth) => set({ analysisDepth }),
       setIoCache: (ioCache) => set({ ioCache }),
       setAutoAnalysis: (autoAnalysis) => set({ autoAnalysis }),
+      setMaxOutputSizeMb: (maxOutputSizeMb) => set({ maxOutputSizeMb }),
       setShowLineNumbers: (showLineNumbers) => set({ showLineNumbers }),
       setHexBytesPerRow: (hexBytesPerRow) => set({ hexBytesPerRow }),
       setDefaultVersion: (defaultVersion) => set({ defaultVersion }),
