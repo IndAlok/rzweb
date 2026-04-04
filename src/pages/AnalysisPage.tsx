@@ -10,7 +10,7 @@ import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, Import
 import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle } from 'lucide-react';
-import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection, RzBinInfo } from '@/types/rizin';
+import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection } from '@/types/rizin';
 
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
@@ -32,6 +32,7 @@ export default function AnalysisPage() {
   const [graphNodes, setGraphNodes] = useState<Array<{id: string; label: string; body?: string}>>([]);
   const [graphEdges, setGraphEdges] = useState<Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}>>([]);
   const terminalRef = useRef<RizinTerminalRef>(null);
+  const functionDetailRequestRef = useRef(0);
 
   void analysisRevision;
 
@@ -55,12 +56,9 @@ export default function AnalysisPage() {
     ? []
     : activeInstance.analysis.sections as RzSection[];
 
-  const binInfo = !activeInstance?.analysis || !analysisReady
+  const infoPayload = !activeInstance?.analysis || !analysisReady
     ? null
-    : ((activeInstance.analysis.info as any)?.core?.info ||
-      (activeInstance.analysis.info as any)?.info ||
-      activeInstance.analysis.info ||
-      null) as RzBinInfo | null;
+    : activeInstance.analysis.info;
 
   useEffect(() => {
     if (!activeInstance) {
@@ -104,6 +102,12 @@ export default function AnalysisPage() {
       setLoadProgress(0);
       setAlerts([]);
       setAnalysisRevision(0);
+      setAnalysisReady(false);
+      setDisasmLines([]);
+      setGraphNodes([]);
+      setGraphEdges([]);
+      setSelectedFunction(null);
+      setCurrentAddress(0);
 
       try {
         const rizinModule = await loadRizinModule({
@@ -131,6 +135,10 @@ export default function AnalysisPage() {
         });
 
         setActiveInstance(rz);
+        const initialSeek = Number.parseInt(rz.getCurrentAddress(), 16);
+        if (!Number.isNaN(initialSeek)) {
+          setCurrentAddress(initialSeek);
+        }
         setAnalysisReady(true);
         setAlerts(rz.allNotices);
         setLoadPhase('ready');
@@ -155,106 +163,125 @@ export default function AnalysisPage() {
     return () => {
       rz?.close();
     };
-  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb]);
+  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb, setCurrentAddress, setSelectedFunction]);
 
-  const fetchDisassembly = useCallback(async (address: number) => {
+  const buildDisassemblyLines = useCallback((disasm: unknown): RzDisasmLine[] => {
+    const parsed = disasm as { ops?: any[] } | null;
+    if (!parsed?.ops || !Array.isArray(parsed.ops)) {
+      return [];
+    }
+
+    return parsed.ops.map((op: any) => ({
+      offset: op.offset || 0,
+      size: op.size || 0,
+      bytes: op.bytes || '',
+      opcode: op.opcode || op.disasm || '',
+      disasm: op.disasm || op.opcode || '',
+      family: op.family || '',
+      type: op.type || '',
+      type_num: op.type_num || 0,
+      type2_num: op.type2_num || 0,
+      comment: op.comment,
+      jump: op.jump,
+      refs: op.refs,
+    }));
+  }, []);
+
+  const buildGraphElements = useCallback((graph: unknown) => {
+    const parsed = graph as any;
+
+    let graphBlocks: any[] = [];
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      graphBlocks = parsed[0]?.blocks || parsed[0]?.nodes || [];
+    } else if (parsed?.nodes) {
+      graphBlocks = parsed.nodes;
+    } else if (parsed?.blocks) {
+      graphBlocks = parsed.blocks;
+    }
+
+    if (!graphBlocks.length) {
+      return {
+        nodes: [] as Array<{id: string; label: string; body?: string}>,
+        edges: [] as Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}>,
+      };
+    }
+
+    const offsetToId = new Map<number, string>();
+    const nodes = graphBlocks.map((node: any, idx: number) => {
+      const nodeId = String(node.id ?? node.offset ?? idx);
+      if (typeof node.offset === 'number') {
+        offsetToId.set(node.offset, nodeId);
+      }
+
+      return {
+        id: nodeId,
+        label: node.title || `0x${(node.offset ?? 0).toString(16)}`,
+        body: node.body || node.ops?.map((op: any) => op.disasm || op.opcode || '').join('\n') || '',
+      };
+    });
+
+    const edges: Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}> = [];
+    graphBlocks.forEach((node: any) => {
+      const sourceId = String(node.id ?? node.offset ?? 0);
+      const outNodes = Array.isArray(node.out_nodes) ? node.out_nodes : [];
+
+      if (outNodes.length > 0) {
+        outNodes.forEach((targetId: number, idx: number) => {
+          const edgeType = outNodes.length === 2
+            ? (idx === 0 ? 'jump' as const : 'fail' as const)
+            : 'jump' as const;
+          edges.push({ source: sourceId, target: String(targetId), type: edgeType });
+        });
+        return;
+      }
+
+      if (typeof node.jump === 'number') {
+        edges.push({
+          source: sourceId,
+          target: offsetToId.get(node.jump) ?? String(node.jump),
+          type: 'jump',
+        });
+      }
+
+      if (typeof node.fail === 'number') {
+        edges.push({
+          source: sourceId,
+          target: offsetToId.get(node.fail) ?? String(node.fail),
+          type: 'fail',
+        });
+      }
+    });
+
+    return { nodes, edges };
+  }, []);
+
+  const loadFunctionPresentation = useCallback(async (address: number) => {
     if (!activeInstance) return;
-    
+
+    const requestId = ++functionDetailRequestRef.current;
     setIsLoadingDisasm(true);
+
     try {
-      const cmd = `s ${address};pdfj`;
+      const detail = await activeInstance.getFunctionDetails(address);
+      if (requestId !== functionDetailRequestRef.current) return;
 
-      const output = await activeInstance.executeCommand(cmd);
+      setDisasmLines(buildDisassemblyLines(detail.disasm));
 
-      
-      if (output) {
-        try {
-          const jsonMatch = output.match(/(\{[\s\S]*\})/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[1]);
-            if (parsed.ops && Array.isArray(parsed.ops)) {
-              const lines: RzDisasmLine[] = parsed.ops.map((op: any) => ({
-                offset: op.offset || 0,
-                bytes: op.bytes || '',
-                opcode: op.opcode || op.disasm || '',
-                comment: op.comment,
-                jump: op.jump,
-                refs: op.refs,
-              }));
-              setDisasmLines(lines);
-
-            }
-          }
-        } catch (e) {
-          console.error('[AnalysisPage:fetchDisassembly] Parse error:', e);
-        }
-      }
-    } finally {
-      setIsLoadingDisasm(false);
-    }
-  }, [activeInstance]);
-
-  const fetchGraphData = useCallback(async (address: number) => {
-    if (!activeInstance) return;
-    
-    try {
-      const cmd = `s ${address};agfj`;
-      const output = await activeInstance.executeCommand(cmd);
-      
-      if (output && output.length > 2) {
-        try {
-          const jsonMatch = output.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[1]);
-            
-            let graphBlocks: any[] = [];
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              graphBlocks = parsed[0]?.blocks || parsed[0]?.nodes || [];
-            } else if (parsed.nodes) {
-              graphBlocks = parsed.nodes;
-            } else if (parsed.blocks) {
-              graphBlocks = parsed.blocks;
-            }
-            
-            if (graphBlocks.length > 0) {
-              const nodes = graphBlocks.map((node: any, idx: number) => ({
-                id: String(node.offset ?? node.id ?? idx),
-                label: node.title || `0x${(node.offset ?? 0).toString(16)}`,
-                body: node.body || node.ops?.map((o: any) => o.disasm || o.opcode || '').join('\n') || '',
-              }));
-              
-              const edges: Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}> = [];
-              graphBlocks.forEach((node: any) => {
-                const nodeId = String(node.offset ?? node.id ?? 0);
-                
-                if (node.jump != null && node.jump !== -1) {
-                  edges.push({ source: nodeId, target: String(node.jump), type: 'jump' });
-                }
-                if (node.fail != null && node.fail !== -1) {
-                  edges.push({ source: nodeId, target: String(node.fail), type: 'fail' });
-                }
-                
-                const outNodes = node.out_nodes || [];
-                outNodes.forEach((targetId: number, idx: number) => {
-                  const edgeType = outNodes.length === 2 
-                    ? (idx === 0 ? 'jump' as const : 'fail' as const)
-                    : 'jump' as const;
-                  edges.push({ source: nodeId, target: String(targetId), type: edgeType });
-                });
-              });
-              
-              setGraphNodes(nodes);
-              setGraphEdges(edges);
-            }
-          }
-        } catch (e) {
-          console.error('[AnalysisPage:fetchGraphData] Parse error:', e);
-        }
-      }
+      const nextGraph = buildGraphElements(detail.graph);
+      setGraphNodes(nextGraph.nodes);
+      setGraphEdges(nextGraph.edges);
     } catch (e) {
-      console.error('[AnalysisPage:fetchGraphData] Error:', e);
+      console.error('[AnalysisPage:loadFunctionPresentation] Error:', e);
+      if (requestId !== functionDetailRequestRef.current) return;
+      setDisasmLines([]);
+      setGraphNodes([]);
+      setGraphEdges([]);
+    } finally {
+      if (requestId === functionDetailRequestRef.current) {
+        setIsLoadingDisasm(false);
+      }
     }
-  }, [activeInstance]);
+  }, [activeInstance, buildDisassemblyLines, buildGraphElements]);
 
   const handleFunctionSelect = useCallback((fcn: RzFunction) => {
 
@@ -263,9 +290,31 @@ export default function AnalysisPage() {
     if (currentView === 'terminal') {
       setCurrentView('disasm');
     }
-    fetchDisassembly(fcn.offset);
-    fetchGraphData(fcn.offset);
-  }, [setCurrentAddress, setSelectedFunction, setCurrentView, currentView, fetchDisassembly, fetchGraphData]);
+    void loadFunctionPresentation(fcn.offset);
+  }, [setCurrentAddress, setSelectedFunction, setCurrentView, currentView, loadFunctionPresentation]);
+
+  useEffect(() => {
+    if (!activeInstance || !selectedFunction || currentAddress <= 0) {
+      return;
+    }
+
+    if (currentView === 'disasm' && disasmLines.length === 0) {
+      void loadFunctionPresentation(currentAddress);
+      return;
+    }
+
+    if (currentView === 'graph' && graphNodes.length === 0) {
+      void loadFunctionPresentation(currentAddress);
+    }
+  }, [
+    activeInstance,
+    currentAddress,
+    currentView,
+    disasmLines.length,
+    graphNodes.length,
+    loadFunctionPresentation,
+    selectedFunction,
+  ]);
 
   const handleGoHome = useCallback(() => {
     activeInstance?.close();
@@ -430,7 +479,7 @@ export default function AnalysisPage() {
               {currentView === 'imports' && <ImportsView imports={imports} onNavigate={setCurrentAddress} />}
               {currentView === 'exports' && <ExportsView exports={exports} onNavigate={setCurrentAddress} />}
               {currentView === 'sections' && <SectionsView sections={sections} onNavigate={setCurrentAddress} />}
-              {currentView === 'info' && <HeaderInfoPanel info={binInfo} fileSize={currentFile?.size} />}
+              {currentView === 'info' && <HeaderInfoPanel info={infoPayload} fileSize={currentFile?.size} />}
             </div>
           </Panel>
         </PanelGroup>

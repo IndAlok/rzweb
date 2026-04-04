@@ -4,7 +4,7 @@ const DB_NAME = 'rzweb-analysis-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'analyses';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
-const CACHE_SCHEMA_VERSION = 2;
+const CACHE_SCHEMA_VERSION = 4;
 
 export interface CachedAnalysis {
   schemaVersion?: number;
@@ -22,6 +22,11 @@ export interface CachedAnalysis {
     exports: unknown[];
     sections: unknown[];
     info: unknown;
+    functionDetails?: Record<string, {
+      disasm?: unknown;
+      graph?: unknown;
+      updatedAt: number;
+    }>;
   };
 }
 
@@ -35,6 +40,13 @@ export interface CacheStats {
     timestamp: number;
     dataSize: number;
   }>;
+}
+
+function hasUsableInfoPayload(value: unknown): boolean {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
 }
 
 async function getDB(): Promise<IDBPDatabase> {
@@ -66,7 +78,8 @@ function isClearlyIncomplete(entry: CachedAnalysis): boolean {
     data.imports.length === 0 &&
     data.exports.length === 0 &&
     data.sections.length === 0 &&
-    data.info == null
+    !hasUsableInfoPayload(data.info) &&
+    Object.keys(data.functionDetails ?? {}).length === 0
   );
 }
 

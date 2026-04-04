@@ -21,6 +21,13 @@ export interface AnalysisData {
   exports: unknown[];
   sections: unknown[];
   info: unknown;
+  functionDetails: Record<string, FunctionDetailCacheEntry>;
+}
+
+export interface FunctionDetailCacheEntry {
+  disasm?: unknown;
+  graph?: unknown;
+  updatedAt: number;
 }
 
 export interface RizinNotice {
@@ -106,13 +113,20 @@ function formatBytes(bytes: number): string {
 
 function hasUsableAnalysisData(data: AnalysisData | null): boolean {
   if (!data) return false;
+  const hasInfo =
+    data.info != null &&
+    (typeof data.info !== 'object' ||
+      Array.isArray(data.info) ||
+      Object.keys(data.info as Record<string, unknown>).length > 0);
+
   return (
     data.functions.length > 0 ||
     data.strings.length > 0 ||
     data.imports.length > 0 ||
     data.exports.length > 0 ||
     data.sections.length > 0 ||
-    data.info != null
+    hasInfo ||
+    Object.keys(data.functionDetails).length > 0
   );
 }
 
@@ -136,6 +150,7 @@ export class RizinInstance {
   private commandQueue: CommandQueueItem[] = [];
   private processing = false;
   private activeOutputCapture: ActiveOutputCapture | null = null;
+  private pendingFunctionDetailLoads = new Map<string, Promise<FunctionDetailCacheEntry>>();
   private currentAddress = '0x00000000';
   private runtimeConfig: RuntimeConfig = {
     ioCache: true,
@@ -435,6 +450,14 @@ export class RizinInstance {
     const trimmed = text.trim();
     if (!trimmed) return null;
 
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      return Number(trimmed);
+    }
+
+    if (/^(true|false|null)$/i.test(trimmed)) {
+      return JSON.parse(trimmed.toLowerCase());
+    }
+
     const arrayStart = trimmed.indexOf('[');
     if (arrayStart !== -1) {
       let depth = 0;
@@ -541,6 +564,62 @@ export class RizinInstance {
     return null;
   }
 
+  private parseJSONSequence(text: string): unknown[] {
+    const values: unknown[] = [];
+    const trimmed = text.trim();
+    if (!trimmed) return values;
+
+    let index = 0;
+
+    while (index < trimmed.length) {
+      while (index < trimmed.length && trimmed[index] !== '{' && trimmed[index] !== '[') {
+        index++;
+      }
+
+      if (index >= trimmed.length) {
+        break;
+      }
+
+      const opener = trimmed[index];
+      const closer = opener === '{' ? '}' : ']';
+      const start = index;
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+
+      for (; index < trimmed.length; index++) {
+        const char = trimmed[index];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+
+        if (char === opener) depth++;
+        if (char === closer) depth--;
+
+        if (depth === 0) {
+          const parsed = this.parseJSON(trimmed.slice(start, index + 1));
+          if (parsed !== null) {
+            values.push(parsed);
+          }
+          index++;
+          break;
+        }
+      }
+    }
+
+    return values;
+  }
+
   private parseAddressLiteral(expr: string): number | null {
     const trimmed = expr.trim();
     if (!trimmed) return null;
@@ -579,6 +658,10 @@ export class RizinInstance {
       .split(';')
       .map(part => part.trim())
       .filter(Boolean);
+  }
+
+  private getFunctionDetailKey(address: number): string {
+    return `0x${address.toString(16)}`;
   }
 
   private needsSeekRestore(command: string): boolean {
@@ -628,12 +711,26 @@ export class RizinInstance {
       part => part === 'aa' || part === 'aaa' || part === 'aaaa' || part === 'af' || part === 'af+'
     );
 
-    const refreshFunctions = markAnalysisComplete || lowerParts.some(part => part.startsWith('afl') || part.startsWith('afj'));
-    const refreshStrings = markAnalysisComplete || lowerParts.some(part => part.startsWith('iz'));
-    const refreshImports = markAnalysisComplete || lowerParts.some(part => part.startsWith('ii'));
-    const refreshExports = markAnalysisComplete || lowerParts.some(part => part.startsWith('ie'));
-    const refreshSections = markAnalysisComplete || lowerParts.some(part => part.startsWith('is'));
-    const refreshInfo = markAnalysisComplete || lowerParts.some(part => part === 'i' || part.startsWith('ij'));
+    const refreshFunctions =
+      markAnalysisComplete || lowerParts.some(part => part.startsWith('afl') || part.startsWith('afj'));
+    const refreshStrings = lowerParts.some(part => part.startsWith('iz'));
+    const refreshImports = parts.some(part => part.startsWith('ii'));
+    const refreshExports = parts.some(part => part.startsWith('iE'));
+    const refreshSections = parts.some(part => part.startsWith('iS'));
+    const refreshInfo = parts.some(
+      part =>
+        part === 'i' ||
+        part.startsWith('ij') ||
+        part.startsWith('iI') ||
+        part.startsWith('ie') ||
+        part.startsWith('ih') ||
+        part.startsWith('iH') ||
+        part.startsWith('il') ||
+        part.startsWith('iM') ||
+        part.startsWith('ir') ||
+        part.startsWith('iT') ||
+        part.startsWith('iV')
+    );
 
     return {
       markAnalysisComplete,
@@ -693,12 +790,109 @@ export class RizinInstance {
   private loadInfoIntoAnalysis(): DataLoadResult {
     if (!this.analysisData) return { loaded: false, truncated: false };
 
-    const { value, truncated } = this.readJsonValue(['ij'], 'Binary info');
-    if (value) {
-      this.analysisData.info = value;
+    const infoRecord =
+      this.analysisData.info && typeof this.analysisData.info === 'object' && !Array.isArray(this.analysisData.info)
+        ? this.analysisData.info as Record<string, unknown>
+        : {};
+
+    let loaded = false;
+    let truncated = false;
+
+    const sections: Array<{ key: string; commands: string[]; label: string }> = [
+      { key: 'overview', commands: ['ij'], label: 'Binary overview' },
+      { key: 'binaryInfo', commands: ['iIj'], label: 'Binary info' },
+      { key: 'entries', commands: ['iej'], label: 'Entrypoints' },
+      { key: 'initFini', commands: ['ieej'], label: 'Init/Fini' },
+      { key: 'headerFields', commands: ['ihj'], label: 'Header fields' },
+      { key: 'structuredHeader', commands: ['iHj'], label: 'Structured header' },
+      { key: 'libraries', commands: ['ilj'], label: 'Libraries' },
+      { key: 'mainAddress', commands: ['iMj'], label: 'Main address' },
+      { key: 'segments', commands: ['iSSj'], label: 'Segments' },
+      { key: 'hashes', commands: ['iTj'], label: 'Hashes' },
+      { key: 'versionInfo', commands: ['iVj'], label: 'Version info' },
+      { key: 'relocations', commands: ['irj'], label: 'Relocations' },
+    ];
+
+    for (const section of sections) {
+      const { value, truncated: sectionTruncated } = this.readJsonValue(section.commands, section.label);
+      truncated = truncated || sectionTruncated;
+
+      if (value !== null) {
+        infoRecord[section.key] = value;
+        loaded = true;
+      }
+    }
+
+    if (loaded) {
+      this.analysisData.info = infoRecord;
       return { loaded: true, truncated };
     }
+
     return { loaded: false, truncated };
+  }
+
+  private getCachedFunctionDetail(address: number): FunctionDetailCacheEntry | null {
+    if (!this.analysisData) return null;
+    return this.analysisData.functionDetails[this.getFunctionDetailKey(address)] ?? null;
+  }
+
+  private async persistFunctionDetail(
+    address: number,
+    detail: Partial<FunctionDetailCacheEntry>
+  ): Promise<FunctionDetailCacheEntry | null> {
+    if (!this.analysisData) return null;
+
+    const key = this.getFunctionDetailKey(address);
+    const nextDetail: FunctionDetailCacheEntry = {
+      ...this.analysisData.functionDetails[key],
+      ...detail,
+      updatedAt: Date.now(),
+    };
+    this.analysisData.functionDetails[key] = nextDetail;
+    await this.persistCurrentAnalysis();
+    return nextDetail;
+  }
+
+  async getFunctionDetails(address: number): Promise<FunctionDetailCacheEntry> {
+    const hexAddress = this.getFunctionDetailKey(address);
+    const cached = this.getCachedFunctionDetail(address);
+    if (cached?.disasm && cached?.graph) {
+      return cached;
+    }
+
+    const pending = this.pendingFunctionDetailLoads.get(hexAddress);
+    if (pending) {
+      return pending;
+    }
+
+    const loadPromise = (async () => {
+      const output = await this.executeCommand(
+        `pdfj @ ${hexAddress};s ${hexAddress};agf json`
+      );
+
+      const parsedValues = this.parseJSONSequence(output);
+      const disasm = parsedValues[0] ?? null;
+      const graph = parsedValues[1] ?? null;
+
+      const detail = await this.persistFunctionDetail(address, {
+        disasm: disasm ?? cached?.disasm,
+        graph: graph ?? cached?.graph,
+      });
+
+      return detail ?? {
+        disasm: disasm ?? undefined,
+        graph: graph ?? undefined,
+        updatedAt: Date.now(),
+      };
+    })();
+
+    this.pendingFunctionDetailLoads.set(hexAddress, loadPromise);
+
+    try {
+      return await loadPromise;
+    } finally {
+      this.pendingFunctionDetailLoads.delete(hexAddress);
+    }
   }
 
   private refreshCurrentAddress(): void {
@@ -836,13 +1030,17 @@ export class RizinInstance {
       exports: [],
       sections: [],
       info: null,
+      functionDetails: {},
     };
 
     this._fileHash = await computeFileHash(file.data);
 
     const cached = await getCachedAnalysis(this._fileHash, this.runtimeConfig.analysisDepth);
     if (cached) {
-      this.analysisData = { ...cached.data };
+      this.analysisData = {
+        ...cached.data,
+        functionDetails: cached.data.functionDetails ?? {},
+      };
       this.analysisCompleted = true;
       this._cacheHit = true;
 
@@ -1001,13 +1199,14 @@ export class RizinInstance {
 
   async getDisassembly(address: number): Promise<string> {
     this.currentAddress = `0x${address.toString(16)}`;
-    return this.executeCommand(`s ${address};pdfj`);
+    const detail = await this.getFunctionDetails(address);
+    return detail.disasm ? JSON.stringify(detail.disasm) : '';
   }
 
   async getGraph(address: number): Promise<unknown> {
     this.currentAddress = `0x${address.toString(16)}`;
-    const output = await this.executeCommand(`s ${address};agfj`);
-    return this.parseJSON(output);
+    const detail = await this.getFunctionDetails(address);
+    return detail.graph ?? null;
   }
 
   async getHexDump(address: number, length = 256): Promise<string> {
@@ -1030,6 +1229,7 @@ export class RizinInstance {
       this.commandQueue = [];
       this.processing = false;
       this.activeOutputCapture = null;
+      this.pendingFunctionDetailLoads.clear();
 
       if (this.filePath && this.module?.FS) {
         try {
