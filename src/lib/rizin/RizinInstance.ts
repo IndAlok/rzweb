@@ -12,6 +12,7 @@ export interface RizinInstanceConfig {
   extraArgs?: string[];
   noAnalysis?: boolean;
   maxOutputBytes?: number;
+  enableCache?: boolean;
 }
 
 export interface AnalysisData {
@@ -86,6 +87,21 @@ interface RuntimeConfig {
   extraArgs: string[];
   noAnalysis: boolean;
   maxOutputBytes: number;
+  enableCache: boolean;
+}
+
+export interface RizinAutocompleteResult {
+  start: number;
+  end: number;
+  endString: string;
+  options: string[];
+}
+
+export interface RizinCommandHelpEntry {
+  name: string;
+  summary?: string;
+  description?: string;
+  args?: string;
 }
 
 interface NativeSessionApi {
@@ -97,6 +113,8 @@ interface NativeSessionApi {
   saveProject: (sessionId: number, projectPath: string, compress: number) => number;
   loadProject: (sessionId: number, projectPath: string, loadBinIo: number) => number;
   getLastError: (sessionId: number) => string;
+  autocomplete?: (sessionId: number, input: string, cursorPos: number, maxResults: number) => string;
+  getCommandCatalog?: (sessionId: number) => string;
 }
 
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -263,12 +281,14 @@ export class RizinInstance {
   private nativeApi: NativeSessionApi | null = null;
   private nativeSessionId: number | null = null;
   private nativeApiChecked = false;
+  private commandCatalogCache: Record<string, RizinCommandHelpEntry> | null = null;
   private runtimeConfig: RuntimeConfig = {
     ioCache: true,
     analysisDepth: 2,
     extraArgs: [],
     noAnalysis: false,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+    enableCache: true,
   };
 
   private yield(): Promise<void> {
@@ -337,6 +357,8 @@ export class RizinInstance {
     }
 
     try {
+      const hasAutocomplete = typeof exported._rzweb_autocomplete === 'function';
+      const hasCommandCatalog = typeof exported._rzweb_get_command_catalog === 'function';
       return {
         createSession: this.module.cwrap('rzweb_create_session', 'number', []) as () => number,
         closeSession: this.module.cwrap('rzweb_close_session', 'number', ['number']) as (sessionId: number) => number,
@@ -362,6 +384,19 @@ export class RizinInstance {
           loadBinIo: number
         ) => number,
         getLastError: this.module.cwrap('rzweb_get_last_error', 'string', ['number']) as (sessionId: number) => string,
+        autocomplete: hasAutocomplete
+          ? this.module.cwrap('rzweb_autocomplete', 'string', ['number', 'string', 'number', 'number']) as (
+              sessionId: number,
+              input: string,
+              cursorPos: number,
+              maxResults: number
+            ) => string
+          : undefined,
+        getCommandCatalog: hasCommandCatalog
+          ? this.module.cwrap('rzweb_get_command_catalog', 'string', ['number']) as (
+              sessionId: number
+            ) => string
+          : undefined,
       };
     } catch {
       return null;
@@ -592,6 +627,78 @@ export class RizinInstance {
 
   get cacheHit(): boolean {
     return this._cacheHit;
+  }
+
+  getAutocomplete(input: string, cursorPos: number, maxResults: number): RizinAutocompleteResult | null {
+    if (!this.hasNativeSession() || !this.nativeApi || !this.nativeApi.autocomplete || this.nativeSessionId == null) {
+      return null;
+    }
+
+    const safeInput = input.slice(0, 4095);
+    const safeCursorPos = Math.max(0, Math.min(cursorPos, safeInput.length));
+    const safeMaxResults = Math.max(1, Math.min(maxResults, 100));
+
+    try {
+      const raw = this.nativeApi.autocomplete(this.nativeSessionId, safeInput, safeCursorPos, safeMaxResults);
+      const parsed = this.parseJSON(raw);
+      if (!isRecord(parsed) || !Array.isArray(parsed.options)) {
+        return null;
+      }
+
+      const options = parsed.options
+        .filter((option): option is string => typeof option === 'string' && option.length > 0)
+        .slice(0, safeMaxResults);
+
+      if (options.length === 0) {
+        return null;
+      }
+
+      const start = typeof parsed.start === 'number' ? parsed.start : safeCursorPos;
+      const end = typeof parsed.end === 'number' ? parsed.end : safeCursorPos;
+
+      return {
+        start: Math.max(0, Math.min(start, safeInput.length)),
+        end: Math.max(0, Math.min(Math.max(end, start), safeInput.length)),
+        endString: typeof parsed.endString === 'string' ? parsed.endString : '',
+        options,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  getCommandCatalog(): Record<string, RizinCommandHelpEntry> {
+    if (this.commandCatalogCache) {
+      return this.commandCatalogCache;
+    }
+
+    if (!this.hasNativeSession() || !this.nativeApi || !this.nativeApi.getCommandCatalog || this.nativeSessionId == null) {
+      return {};
+    }
+
+    try {
+      const raw = this.nativeApi.getCommandCatalog(this.nativeSessionId);
+      const parsed = this.parseJSON(raw);
+      if (!isRecord(parsed)) {
+        return {};
+      }
+
+      const catalog: Record<string, RizinCommandHelpEntry> = {};
+      for (const [name, value] of Object.entries(parsed)) {
+        if (!isRecord(value)) continue;
+        catalog[name] = {
+          name,
+          summary: typeof value.summary === 'string' ? value.summary : undefined,
+          description: typeof value.description === 'string' ? value.description : undefined,
+          args: typeof value.args === 'string' ? value.args : undefined,
+        };
+      }
+
+      this.commandCatalogCache = catalog;
+      return catalog;
+    } catch {
+      return {};
+    }
   }
 
   get allNotices(): RizinNotice[] {
@@ -1300,6 +1407,7 @@ export class RizinInstance {
 
   private shouldPersistCache(truncated: boolean): boolean {
     if (truncated) return false;
+    if (!this.runtimeConfig.enableCache) return false;
     if (!this.analysisCompleted) return false;
     if (!this.file || !this._fileHash || !this.analysisData) return false;
     return hasUsableAnalysisData(this.analysisData);
@@ -1321,8 +1429,9 @@ export class RizinInstance {
       fileSize: this.file.data.length,
       timestamp: Date.now(),
       analysisDepth: this.runtimeConfig.analysisDepth,
-      dataSize: serialized.length + (projectData?.byteLength ?? 0),
+      dataSize: serialized.length + (projectData?.byteLength ?? 0) + this.file.data.byteLength,
       complete: true,
+      binaryData: this.file.data,
       projectData: projectData ?? undefined,
       data: this.analysisData,
     };
@@ -1339,12 +1448,14 @@ export class RizinInstance {
     this._cacheHit = false;
     this.currentAddress = '0x00000000';
     this.notices = [];
+    this.commandCatalogCache = null;
     this.runtimeConfig = {
       ioCache: config?.ioCache ?? true,
       analysisDepth: config?.analysisDepth ?? 2,
       extraArgs: config?.extraArgs ?? [],
       noAnalysis: config?.noAnalysis ?? false,
       maxOutputBytes: config?.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      enableCache: config?.enableCache ?? true,
     };
 
     this.analysisData = {
@@ -1362,7 +1473,9 @@ export class RizinInstance {
     this.ensureWorkDir();
     this.module.FS.writeFile(this.filePath, file.data);
 
-    const cached = await getCachedAnalysis(this._fileHash, this.runtimeConfig.analysisDepth);
+    const cached = this.runtimeConfig.enableCache
+      ? await getCachedAnalysis(this._fileHash, this.runtimeConfig.analysisDepth)
+      : null;
     if (cached) {
       this.analysisData = {
         ...cached.data,
@@ -1619,6 +1732,7 @@ export class RizinInstance {
       this.notices = [];
       this.currentAddress = '0x00000000';
       this.nativeSessionId = null;
+      this.commandCatalogCache = null;
     }
   }
 }

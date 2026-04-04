@@ -1,10 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useFileStore, useSettingsStore } from '@/stores';
 import { Button } from '@/components/ui';
 import { FileDropZone } from '@/components/file';
 import { formatSize } from '@/lib/utils/format';
 import { getRizinVersion } from '@/lib/utils/version';
+import { getCachedAnalysisEntry, listCachedAnalyses, type CachedAnalysisSummary } from '@/lib/rizin';
 import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2 } from 'lucide-react';
 import { useTheme } from '@/providers';
 
@@ -16,15 +18,34 @@ export default function HomePage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [openingCachedHash, setOpeningCachedHash] = useState<string | null>(null);
   const [rizinVersion, setRizinVersion] = useState('...');
+  const [cachedEntries, setCachedEntries] = useState<CachedAnalysisSummary[]>([]);
 
   useEffect(() => {
     getRizinVersion().then(setRizinVersion);
+    listCachedAnalyses().then(setCachedEntries);
   }, []);
 
-  const handleFileSelect = useCallback((f: File) => {
-    setFile(f);
+  const handleFileSelect = useCallback((nextFile: File) => {
+    setFile(nextFile);
   }, []);
+
+  const launchBinary = useCallback((params: {
+    name: string;
+    data: Uint8Array;
+    size: number;
+    useCache: boolean;
+  }) => {
+    setCurrentFile({
+      id: crypto.randomUUID(),
+      name: params.name,
+      data: params.data,
+      size: params.size,
+      loadedAt: Date.now(),
+    });
+    navigate(`/analyze?cache=${params.useCache}`);
+  }, [navigate, setCurrentFile]);
 
   const handleOpenRizin = useCallback(async () => {
     if (!file) return;
@@ -32,27 +53,56 @@ export default function HomePage() {
     setIsProcessing(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
-      setCurrentFile({
-        id: crypto.randomUUID(),
+      launchBinary({
         name: file.name,
         data: new Uint8Array(arrayBuffer),
         size: file.size,
-        loadedAt: Date.now(),
+        useCache: cacheVersions,
       });
-      navigate(`/analyze?cache=${cacheVersions}`);
     } catch {
+      toast.error('Unable to open the selected binary.');
     } finally {
       setIsProcessing(false);
     }
-  }, [file, cacheVersions, setCurrentFile, navigate]);
+  }, [cacheVersions, file, launchBinary]);
+
+  const handleOpenCachedBinary = useCallback(async (hash: string) => {
+    setOpeningCachedHash(hash);
+    try {
+      const cached = await getCachedAnalysisEntry(hash);
+      if (!cached) {
+        toast.error('That cached analysis is no longer available.');
+        setCachedEntries(await listCachedAnalyses());
+        return;
+      }
+
+      if (!(cached.binaryData instanceof Uint8Array) || cached.binaryData.byteLength === 0) {
+        toast.error('This older cache entry only has parsed metadata. Analyze the binary one more time to make it directly reopenable from Home.');
+        return;
+      }
+
+      launchBinary({
+        name: cached.fileName,
+        data: new Uint8Array(cached.binaryData),
+        size: cached.fileSize,
+        useCache: true,
+      });
+    } catch {
+      toast.error('Unable to reopen the cached binary right now.');
+    } finally {
+      setOpeningCachedHash(null);
+    }
+  }, [launchBinary]);
+
+  const formatHash = useCallback((hash: string) => `${hash.slice(0, 12)}...${hash.slice(-6)}`, []);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-12 items-center justify-between border-b border-border px-4 sm:px-6 bg-card">
+      <header className="flex h-12 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <Terminal className="h-5 w-5 text-primary" />
           <span className="font-mono font-bold text-primary">RzWeb</span>
-          <span className="text-[10px] text-muted-foreground font-mono">v{rizinVersion}</span>
+          <span className="text-[10px] font-mono text-muted-foreground">v{rizinVersion}</span>
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -72,19 +122,19 @@ export default function HomePage() {
 
       <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-2xl">
-          <div className="text-center mb-6 sm:mb-8">
-            <pre className="text-primary font-mono text-[8px] sm:text-xs leading-tight inline-block">
-{`  ____       __        __   _     
- |  _ \\ ____\\ \\      / /__| |__  
- | |_) |_  / \\ \\ /\\ / / _ \\ '_ \\ 
+          <div className="mb-6 text-center sm:mb-8">
+            <pre className="inline-block text-[8px] leading-tight text-primary sm:text-xs font-mono">
+{`  ____       __        __   _
+ |  _ \\ ____\\ \\      / /__| |__
+ | |_) |_  / \\ \\ /\\ / / _ \\ '_ \\
  |  _ < / /   \\ V  V /  __/ |_) |
  |_| \\_\\___|   \\_/\\_/ \\___|_.__/ `}
             </pre>
-            <p className="mt-4 text-foreground/80 font-mono text-sm">
+            <p className="mt-4 text-sm font-mono text-foreground/80">
               Browser-Based Reverse Engineering
             </p>
-            <p className="mt-2 text-muted-foreground font-mono text-xs max-w-md mx-auto">
-              Analyze binaries directly in your browser. No uploads, no servers. 
+            <p className="mx-auto mt-2 max-w-md text-xs font-mono text-muted-foreground">
+              Analyze binaries directly in your browser. No uploads, no servers.
               Powered by Rizin compiled to WebAssembly.
             </p>
           </div>
@@ -97,12 +147,12 @@ export default function HomePage() {
             />
 
             <div className="mt-4 flex items-center justify-between">
-              <label className="flex items-center gap-2 text-xs text-muted-foreground font-mono cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-mono text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={cacheVersions}
-                  onChange={(e) => setCacheVersions(e.target.checked)}
-                  className="rounded border-border h-3 w-3"
+                  onChange={(event) => setCacheVersions(event.target.checked)}
+                  className="h-3 w-3 rounded border-border"
                 />
                 Cache offline
               </label>
@@ -111,34 +161,71 @@ export default function HomePage() {
                 disabled={!file || isProcessing}
                 loading={isProcessing}
               >
-                Analyze →
+                Analyze
               </Button>
             </div>
           </div>
 
-          <div className="mt-4 sm:mt-6 grid grid-cols-3 gap-2 sm:gap-4">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-mono">
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:mt-6 sm:gap-4">
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
               <Cpu className="h-4 w-4 text-primary" />
               <span>WASM Powered</span>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-mono">
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
               <Lock className="h-4 w-4 text-primary" />
               <span>100% Private</span>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground text-xs font-mono">
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
               <Code2 className="h-4 w-4 text-primary" />
               <span>Full CLI Access</span>
             </div>
           </div>
 
+          {cachedEntries.length > 0 && (
+            <div className="mt-6 rounded border border-border bg-card/50 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-[10px] font-mono text-muted-foreground">OFFLINE CACHE:</p>
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  Click a cached filename to reopen instantly
+                </p>
+              </div>
+              <div className="space-y-2">
+                {cachedEntries.slice(0, 5).map((entry) => {
+                  const isOpening = openingCachedHash === entry.hash;
+                  return (
+                    <button
+                      key={entry.hash}
+                      type="button"
+                      onClick={() => void handleOpenCachedBinary(entry.hash)}
+                      disabled={!entry.hasBinaryData || isOpening}
+                      className="flex w-full items-center justify-between gap-3 rounded border border-border/60 bg-background/40 px-3 py-2 text-left transition hover:border-primary/40 hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-mono text-foreground">{entry.fileName}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                          <span>{formatSize(entry.fileSize)}</span>
+                          <span>{formatHash(entry.hash)}</span>
+                          <span>{entry.hasBinaryData ? 'launchable' : 'metadata only'}</span>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-[10px] font-mono text-primary">
+                        {isOpening ? 'Opening...' : entry.hasBinaryData ? 'Open' : 'Rebuild'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {recentFiles.length > 0 && (
-            <div className="mt-6 border border-border rounded bg-card/50 p-3">
-              <p className="text-[10px] text-muted-foreground font-mono mb-2">RECENT:</p>
+            <div className="mt-4 rounded border border-border bg-card/50 p-3">
+              <p className="mb-2 text-[10px] font-mono text-muted-foreground">RECENT:</p>
               <div className="space-y-1">
-                {recentFiles.slice(0, 3).map((rf) => (
-                  <div key={rf.name} className="flex justify-between text-xs font-mono">
-                    <span className="text-foreground truncate max-w-[200px]">{rf.name}</span>
-                    <span className="text-muted-foreground">{formatSize(rf.size)}</span>
+                {recentFiles.slice(0, 3).map((recentFile) => (
+                  <div key={`${recentFile.name}-${recentFile.loadedAt}`} className="flex justify-between text-xs font-mono">
+                    <span className="max-w-[200px] truncate text-foreground">{recentFile.name}</span>
+                    <span className="text-muted-foreground">{formatSize(recentFile.size)}</span>
                   </div>
                 ))}
               </div>
@@ -147,8 +234,8 @@ export default function HomePage() {
         </div>
       </main>
 
-      <footer className="border-t border-border py-3 px-4 sm:px-6 bg-card">
-        <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground font-mono">
+      <footer className="border-t border-border bg-card px-4 py-3 sm:px-6">
+        <div className="flex items-center justify-center gap-4 text-[10px] font-mono text-muted-foreground">
           <span>
             by{' '}
             <a href="https://github.com/IndAlok" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">

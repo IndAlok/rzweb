@@ -6,6 +6,16 @@ const STORE_NAME = 'analyses';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
 const CACHE_SCHEMA_VERSION = 6;
 
+export interface CachedAnalysisSummary {
+  hash: string;
+  fileName: string;
+  fileSize: number;
+  timestamp: number;
+  dataSize: number;
+  analysisDepth: number;
+  hasBinaryData: boolean;
+}
+
 export interface CachedAnalysis {
   schemaVersion?: number;
   hash: string;
@@ -15,6 +25,7 @@ export interface CachedAnalysis {
   analysisDepth: number;
   dataSize: number;
   complete?: boolean;
+  binaryData?: Uint8Array;
   projectData?: Uint8Array;
   data: {
     functions: unknown[];
@@ -33,6 +44,10 @@ export interface CachedAnalysis {
 
 function hasProjectData(entry: CachedAnalysis): boolean {
   return entry.projectData instanceof Uint8Array && entry.projectData.byteLength > 0;
+}
+
+function hasBinaryData(entry: CachedAnalysis): boolean {
+  return entry.binaryData instanceof Uint8Array && entry.binaryData.byteLength > 0;
 }
 
 export interface CacheStats {
@@ -123,6 +138,18 @@ export async function setCachedAnalysis(entry: CachedAnalysis): Promise<void> {
   }
 }
 
+function toSummary(entry: CachedAnalysis): CachedAnalysisSummary {
+  return {
+    hash: entry.hash,
+    fileName: entry.fileName,
+    fileSize: entry.fileSize,
+    timestamp: entry.timestamp,
+    dataSize: entry.dataSize,
+    analysisDepth: entry.analysisDepth,
+    hasBinaryData: hasBinaryData(entry),
+  };
+}
+
 async function evictIfNeeded(db: IDBPDatabase): Promise<void> {
   const all = await db.getAll(STORE_NAME) as CachedAnalysis[];
   let totalBytes = all.reduce((sum, e) => sum + e.dataSize, 0);
@@ -154,6 +181,36 @@ export async function getCacheStats(): Promise<CacheStats> {
     };
   } catch {
     return { entryCount: 0, totalBytes: 0, entries: [] };
+  }
+}
+
+export async function listCachedAnalyses(): Promise<CachedAnalysisSummary[]> {
+  try {
+    const db = await getDB();
+    const all = await db.getAll(STORE_NAME) as CachedAnalysis[];
+    return all
+      .filter(entry => !isClearlyIncomplete(entry))
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .map(toSummary);
+  } catch {
+    return [];
+  }
+}
+
+export async function getCachedAnalysisEntry(hash: string): Promise<CachedAnalysis | null> {
+  try {
+    const db = await getDB();
+    const entry = await db.get(STORE_NAME, hash) as CachedAnalysis | undefined;
+    if (!entry) {
+      return null;
+    }
+    if (isClearlyIncomplete(entry)) {
+      await db.delete(STORE_NAME, hash);
+      return null;
+    }
+    return entry;
+  } catch {
+    return null;
   }
 }
 

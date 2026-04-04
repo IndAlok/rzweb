@@ -17,6 +17,8 @@ export function SettingsDialog() {
   const { 
     terminalFontSize, setTerminalFontSize, 
     terminalScrollback, setTerminalScrollback,
+    terminalAutocompleteMinChars, setTerminalAutocompleteMinChars,
+    terminalAutocompleteMaxResults, setTerminalAutocompleteMaxResults,
     ioCache, setIoCache,
     analysisDepth, setAnalysisDepth,
     maxOutputSizeMb, setMaxOutputSizeMb,
@@ -119,6 +121,42 @@ export function SettingsDialog() {
                           <SelectContent>
                             {[1000, 5000, 10000, 50000].map(s => (
                               <SelectItem key={s} value={s.toString()}>{s.toLocaleString()}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium">Autocomplete Min Chars</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Live suggestions appear after this many typed characters. Tab can still request completion earlier.
+                          </p>
+                        </div>
+                        <Select value={terminalAutocompleteMinChars.toString()} onValueChange={(v) => setTerminalAutocompleteMinChars(parseInt(v))}>
+                          <SelectTrigger className="w-24 h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[1, 2, 3, 4, 5, 6, 8, 10].map(value => (
+                              <SelectItem key={value} value={value.toString()}>{value}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium">Autocomplete Results</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Caps the number of completion suggestions shown in the terminal popup.
+                          </p>
+                        </div>
+                        <Select value={terminalAutocompleteMaxResults.toString()} onValueChange={(v) => setTerminalAutocompleteMaxResults(parseInt(v))}>
+                          <SelectTrigger className="w-24 h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[5, 8, 12, 16, 20, 30, 50, 100].map(value => (
+                              <SelectItem key={value} value={value.toString()}>{value}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>

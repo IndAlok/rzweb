@@ -131,6 +131,7 @@ export default function AnalysisPage() {
           analysisDepth,
           noAnalysis,
           maxOutputBytes: maxOutputSizeMb * 1024 * 1024,
+          enableCache: shouldCache,
           extraArgs: ['-e', 'scr.color=0', '-e', 'scr.utf8=false'],
         });
 
