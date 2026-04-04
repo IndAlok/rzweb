@@ -616,6 +616,10 @@ export class RizinInstance {
     return depth >= 3 ? 'aaaa' : depth >= 2 ? 'aaa' : 'aa';
   }
 
+  private getConfiguredAnalysisCommand(): string {
+    return this.resolveAnalysisCommand(this.runtimeConfig.analysisDepth);
+  }
+
   private buildRefreshPlan(command: string): RefreshPlan {
     const parts = this.splitCommands(command);
     const lowerParts = parts.map(part => part.toLowerCase());
@@ -697,6 +701,21 @@ export class RizinInstance {
     return { loaded: false, truncated };
   }
 
+  private refreshCurrentAddress(): void {
+    if (!this.filePath) return;
+
+    const result = this.runCommand('s', this.filePath, {
+      context: 'metadata',
+      commandLabel: 'Current seek',
+      suppressNotice: true,
+      maxOutputBytes: 1024,
+    });
+    const match = result.output.trim().match(/^(0x[0-9a-fA-F]+)/);
+    if (match) {
+      this.currentAddress = match[1];
+    }
+  }
+
   private async refreshAnalysisData(plan: RefreshPlan): Promise<{ changed: boolean; truncated: boolean }> {
     if (!this.analysisData || !this.filePath) {
       return { changed: false, truncated: false };
@@ -710,8 +729,12 @@ export class RizinInstance {
       changed = true;
     }
 
-    if (plan.refreshFunctions && this.analysisCompleted) {
-      const result = this.loadArrayIntoAnalysis('functions', ['aflj'], 'Functions');
+    if (plan.refreshFunctions) {
+      const result = this.loadArrayIntoAnalysis(
+        'functions',
+        [`${this.getConfiguredAnalysisCommand()};aflj`],
+        'Functions'
+      );
       changed = changed || result.loaded;
       truncated = truncated || result.truncated;
       await this.yield();
@@ -830,6 +853,7 @@ export class RizinInstance {
         // The working directory already exists in the in-memory FS.
       }
       cachedFs.writeFile(this.filePath, file.data);
+      this.refreshCurrentAddress();
       this.emitAnalysisChanged();
       return;
     }
@@ -841,6 +865,7 @@ export class RizinInstance {
       // The working directory already exists in the in-memory FS.
     }
     fs.writeFile(this.filePath, file.data);
+    this.refreshCurrentAddress();
 
     if (file.data.length >= LARGE_BINARY_ALERT_BYTES) {
       this.emitNotice({
@@ -854,16 +879,21 @@ export class RizinInstance {
     let truncated = false;
 
     if (!this.runtimeConfig.noAnalysis) {
-      const analysisResult = this.runCommand(
-        this.resolveAnalysisCommand(this.runtimeConfig.analysisDepth),
-        this.filePath,
-        {
-          context: 'analysis',
-          commandLabel: 'Initial analysis',
-        }
+      const functionsResult = this.loadArrayIntoAnalysis(
+        'functions',
+        [`${this.getConfiguredAnalysisCommand()};aflj`],
+        'Functions'
       );
-      truncated = truncated || analysisResult.truncated;
+      truncated = truncated || functionsResult.truncated;
       this.analysisCompleted = true;
+      if (!functionsResult.loaded) {
+        this.emitNotice({
+          severity: 'warning',
+          code: 'functions-unavailable',
+          message: 'Function analysis did not populate during startup.',
+          detail: 'The binary is open, but function indexing could not be parsed from the current WASM run.',
+        });
+      }
       await this.yield();
     } else {
       this.emitNotice({
@@ -875,7 +905,7 @@ export class RizinInstance {
 
     const refreshResult = await this.refreshAnalysisData({
       markAnalysisComplete: this.analysisCompleted,
-      refreshFunctions: this.analysisCompleted,
+      refreshFunctions: false,
       refreshStrings: true,
       refreshImports: true,
       refreshExports: true,
@@ -908,14 +938,16 @@ export class RizinInstance {
     while (this.commandQueue.length > 0) {
       const item = this.commandQueue.shift()!;
       try {
-        let finalCmd = item.command.trim();
+        const originalCmd = item.command.trim();
+        let finalCmd = originalCmd;
 
         if (this.needsSeekRestore(finalCmd)) {
           finalCmd = `s ${this.currentAddress};${finalCmd}`;
         }
 
-        if (!this.analysisCompleted && this.needsAnalysisPrefix(finalCmd)) {
-          finalCmd = `aa;${finalCmd}`;
+        const prefixedAnalysis = this.needsAnalysisPrefix(finalCmd);
+        if (prefixedAnalysis) {
+          finalCmd = `${this.getConfiguredAnalysisCommand()};${finalCmd}`;
         }
 
         const result = this.runCommand(finalCmd, this.filePath, {
@@ -926,7 +958,10 @@ export class RizinInstance {
         this.updateCurrentAddressFromCommand(finalCmd);
         item.resolve(result.output);
 
-        const refreshPlan = this.buildRefreshPlan(finalCmd);
+        const refreshPlan = this.buildRefreshPlan(originalCmd);
+        if (prefixedAnalysis) {
+          refreshPlan.markAnalysisComplete = true;
+        }
         const refreshResult = await this.refreshAnalysisData(refreshPlan);
         if (refreshPlan.markAnalysisComplete && !refreshResult.truncated) {
           await this.persistCurrentAnalysis();

@@ -4,8 +4,10 @@ const DB_NAME = 'rzweb-analysis-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'analyses';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
+const CACHE_SCHEMA_VERSION = 2;
 
 export interface CachedAnalysis {
+  schemaVersion?: number;
   hash: string;
   fileName: string;
   fileSize: number;
@@ -54,6 +56,7 @@ export async function computeFileHash(data: Uint8Array): Promise<string> {
 }
 
 function isClearlyIncomplete(entry: CachedAnalysis): boolean {
+  if ((entry.schemaVersion ?? 0) < CACHE_SCHEMA_VERSION) return true;
   if (entry.complete === false) return true;
 
   const { data } = entry;
@@ -91,7 +94,10 @@ export async function getCachedAnalysis(
 export async function setCachedAnalysis(entry: CachedAnalysis): Promise<void> {
   try {
     const db = await getDB();
-    await db.put(STORE_NAME, entry);
+    await db.put(STORE_NAME, {
+      ...entry,
+      schemaVersion: CACHE_SCHEMA_VERSION,
+    });
     await evictIfNeeded(db);
   } catch {
     // IndexedDB writes are best-effort; analysis can still continue without a cache write.
