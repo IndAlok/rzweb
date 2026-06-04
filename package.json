@@ -45,7 +45,7 @@
     "react-error-boundary": "^4.1.2",
     "react-hotkeys-hook": "^4.6.2",
     "react-resizable-panels": "^2.1.9",
-    "react-router-dom": "^6.30.3",
+    "react-router-dom": "^6.30.4",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
     "zustand": "^4.5.7"
