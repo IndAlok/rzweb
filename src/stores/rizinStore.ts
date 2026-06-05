@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { RizinModule } from '@/lib/rizin';
 
 export interface RizinFile {
   name: string;
@@ -11,7 +10,6 @@ export interface RizinFile {
 type LoadPhase = 'idle' | 'initializing' | 'downloading' | 'processing' | 'analyzing' | 'ready' | 'error';
 
 interface RizinState {
-  module: RizinModule | null;
   isLoading: boolean;
   loadProgress: number;
   loadPhase: LoadPhase;
@@ -20,7 +18,6 @@ interface RizinState {
   cachedVersions: string[];
   error: string | null;
 
-  setModule: (module: RizinModule | null) => void;
   setLoading: (loading: boolean) => void;
   setLoadProgress: (progress: number) => void;
   setLoadPhase: (phase: LoadPhase) => void;
@@ -34,7 +31,6 @@ interface RizinState {
 }
 
 const initialState = {
-  module: null,
   isLoading: false,
   loadProgress: 0,
   loadPhase: 'idle' as LoadPhase,
@@ -49,7 +45,6 @@ export const useRizinStore = create<RizinState>()(
     (set, get) => ({
       ...initialState,
 
-      setModule: (module) => set({ module }),
       setLoading: (isLoading) => set({ isLoading }),
       setLoadProgress: (loadProgress) => set({ loadProgress }),
       setLoadPhase: (loadPhase) => set({ loadPhase }),

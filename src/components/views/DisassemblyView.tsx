@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useUIStore } from '@/stores';
+import { useUIStore, useSettingsStore } from '@/stores';
 import { cn } from '@/lib/utils';
 import { formatAddress } from '@/lib/utils/format';
 import type { RzDisasmLine, RzReference } from '@/types/rizin';
@@ -14,15 +14,21 @@ interface DisassemblyViewProps {
 
 export function DisassemblyView({ lines, onNavigate, className }: DisassemblyViewProps) {
   const { currentAddress } = useUIStore();
+  const showLineNumbers = useSettingsStore((s) => s.showLineNumbers);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Keep the highlighted instruction in view as the seek address changes
   useEffect(() => {
-  }, [currentAddress]);
+    const container = scrollRef.current;
+    if (!container) return;
+    const row = container.querySelector<HTMLElement>(`[data-offset="${currentAddress}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [currentAddress, lines]);
 
   return (
     <div className={cn('flex flex-col h-full bg-background font-mono overflow-hidden', className)}>
       <header className="flex h-8 items-center border-b border-border bg-muted/30 px-4 text-[10px] font-medium text-muted-foreground uppercase tracking-wider shrink-0">
-        <div className="w-24">Address</div>
+        {showLineNumbers && <div className="w-24">Address</div>}
         <div className="w-16">Bytes</div>
         <div className="flex-1 px-2">Instruction</div>
       </header>
@@ -37,26 +43,29 @@ export function DisassemblyView({ lines, onNavigate, className }: DisassemblyVie
             lines.map((line) => (
               <div
                 key={line.offset}
+                data-offset={line.offset}
                 className={cn(
                   'group flex min-h-[1.5rem] px-4 py-0.5 text-sm hover:bg-accent/50 cursor-pointer transition-colors',
                   line.offset === currentAddress && 'bg-primary/20 hover:bg-primary/25 border-l-2 border-primary'
                 )}
                 onClick={() => onNavigate?.(line.offset)}
               >
-                <div className="w-24 shrink-0 text-code-address opacity-80 group-hover:opacity-100">
-                  {formatAddress(line.offset, 32)}
-                </div>
-                
+                {showLineNumbers && (
+                  <div className="w-24 shrink-0 text-code-address opacity-80 group-hover:opacity-100">
+                    {formatAddress(line.offset, 32)}
+                  </div>
+                )}
+
                 <div className="w-16 shrink-0 text-muted-foreground text-[10px] truncate pr-2 opacity-60">
                   {line.bytes}
                 </div>
                 
                 <div className="flex-1 overflow-hidden px-2">
                   <span className="text-code-instruction font-medium mr-2">
-                    {line.opcode.split(' ')[0]}
+                    {line.disasm.split(' ')[0]}
                   </span>
                   <span className="text-foreground">
-                    {line.opcode.split(' ').slice(1).join(' ')}
+                    {line.disasm.split(' ').slice(1).join(' ')}
                   </span>
                   
                   {line.comment && (

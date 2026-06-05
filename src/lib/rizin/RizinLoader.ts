@@ -1,7 +1,6 @@
-/**
- * @file RizinLoader.ts
- * @brief Loads Rizin WASM module from GitHub Pages
- */
+
+import RizinWorker from './rizin.worker.ts?worker';
+import type { RizinControl, RizinOutbound } from './rizinProtocol';
 
 export interface RizinModule {
   print: (text: string) => void;
@@ -35,160 +34,79 @@ export interface LoadProgress {
 
 export type ProgressCallback = (progress: LoadProgress) => void;
 
-const WASM_BASE_URL = 'https://indalok.github.io/rzwasi';
-
-let cachedModule: RizinModule | null = null;
-let loadingPromise: Promise<RizinModule> | null = null;
+let worker: Worker | null = null;
+let ready = false;
+let loadingPromise: Promise<Worker> | null = null;
 
 export async function loadRizinModule(
   options: {
     onProgress?: ProgressCallback;
   } = {}
-): Promise<RizinModule> {
+): Promise<Worker> {
   const { onProgress } = options;
 
-  const notify = (
-    phase: LoadProgress['phase'],
-    progress: number,
-    message: string
-  ) => {
-    onProgress?.({ phase, progress, message });
-  };
-
-  if (cachedModule) {
-    notify('ready', 100, 'Rizin loaded from cache');
-    return cachedModule;
+  if (ready && worker) {
+    onProgress?.({ phase: 'ready', progress: 100, message: 'Rizin loaded from cache' });
+    return worker;
   }
 
   if (loadingPromise) {
     return loadingPromise;
   }
 
-  loadingPromise = (async () => {
-    try {
-      notify('initializing', 5, 'Loading Rizin module...');
+  loadingPromise = new Promise<Worker>((resolve, reject) => {
+    const w = new RizinWorker();
 
-      const modulePromise = new Promise<RizinModule>((resolve, reject) => {
-        const stdoutBuffer: number[] = [];
-        const stderrBuffer: number[] = [];
-        const CHUNK_SIZE = 8192;
-        const FLUSH_THRESHOLD = 65536;
-        
-        const charsToString = (buf: number[]): string => {
-          if (buf.length <= CHUNK_SIZE) {
-            return String.fromCharCode.apply(null, buf);
-          }
-          const parts: string[] = [];
-          for (let i = 0; i < buf.length; i += CHUNK_SIZE) {
-            const slice = buf.slice(i, Math.min(i + CHUNK_SIZE, buf.length));
-            parts.push(String.fromCharCode.apply(null, slice));
-          }
-          return parts.join('');
-        };
-        
-        const flushStdout = () => {
-          if (stdoutBuffer.length > 0) {
-            const text = charsToString(stdoutBuffer);
-            stdoutBuffer.length = 0;
-            const mod = (window as unknown as { Module: RizinModule }).Module;
-            mod?._printHandler?.(text);
-          }
-        };
-        
-        const flushStderr = () => {
-          if (stderrBuffer.length > 0) {
-            const text = charsToString(stderrBuffer);
-            stderrBuffer.length = 0;
-            const mod = (window as unknown as { Module: RizinModule }).Module;
-            mod?._printErrHandler?.(text);
-          }
-        };
-        
-        const moduleConfig: Partial<RizinModule> & {
-          locateFile: (path: string) => string;
-          onAbort: (msg: string) => void;
-          preRun: (() => void)[];
-          noInitialRun: boolean;
-        } = {
-          locateFile: (path: string) => `${WASM_BASE_URL}/${path}`,
-          noInitialRun: true,
-          preRun: [
-            () => {
-              const mod = (window as unknown as { Module: RizinModule }).Module;
-              if (mod?.FS?.init) {
-                mod.FS.init(
-                  () => null,
-                  (code: number) => {
-                    if (code === 10) flushStdout();
-                    else {
-                      stdoutBuffer.push(code);
-                      if (stdoutBuffer.length >= FLUSH_THRESHOLD) flushStdout();
-                    }
-                  },
-                  (code: number) => {
-                    if (code === 10) flushStderr();
-                    else {
-                      stderrBuffer.push(code);
-                      if (stderrBuffer.length >= FLUSH_THRESHOLD) flushStderr();
-                    }
-                  }
-                );
-              }
-            }
-          ],
-          print: (text: string) => {
-            const mod = (window as unknown as { Module: RizinModule }).Module;
-            mod?._printHandler?.(text);
-          },
-          printErr: (text: string) => {
-            const mod = (window as unknown as { Module: RizinModule }).Module;
-            mod?._printErrHandler?.(text);
-          },
-          onRuntimeInitialized: () => {
-            notify('ready', 100, 'Rizin ready');
-            cachedModule = (window as unknown as { Module: RizinModule }).Module;
-            resolve(cachedModule);
-          },
-          onAbort: (msg: string) => {
-            reject(new Error(`Rizin module aborted: ${msg}`));
-          },
-        };
+    const cleanup = () => {
+      w.removeEventListener('message', handleMessage);
+      w.removeEventListener('error', handleError);
+    };
 
-        (window as unknown as { Module: typeof moduleConfig }).Module = moduleConfig;
-
-        const script = document.createElement('script');
-        script.src = `${WASM_BASE_URL}/rizin.js`;
-        script.async = true;
-        script.crossOrigin = 'anonymous';
-        
-        script.onload = () => {
-          notify('processing', 50, 'Initializing Rizin...');
-        };
-        
-        script.onerror = () => {
-          reject(new Error('Failed to load rizin.js'));
-        };
-
-        notify('downloading', 20, 'Downloading Rizin...');
-        document.head.appendChild(script);
-      });
-
-      return await modulePromise;
-    } catch (error) {
-      notify('error', 0, `Error: ${error}`);
+    const fail = (message: string) => {
+      cleanup();
+      w.terminate();
+      worker = null;
+      ready = false;
       loadingPromise = null;
-      throw error;
-    }
-  })();
+      reject(new Error(message));
+    };
+
+    const handleMessage = (event: MessageEvent<RizinOutbound>) => {
+      const data = event.data;
+      if (!('event' in data)) return;
+      if (data.event === 'progress') {
+        onProgress?.({ phase: data.phase, progress: data.progress, message: data.message });
+        if (data.phase === 'error') fail(data.message);
+      } else if (data.event === 'ready') {
+        cleanup();
+        worker = w;
+        ready = true;
+        resolve(w);
+      }
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      fail(event.message || 'Rizin worker failed to load');
+    };
+
+    w.addEventListener('message', handleMessage);
+    w.addEventListener('error', handleError);
+
+    onProgress?.({ phase: 'initializing', progress: 5, message: 'Loading Rizin module...' });
+    const init: RizinControl = { control: 'init' };
+    w.postMessage(init);
+  });
 
   return loadingPromise;
 }
 
 export async function getCachedVersions(): Promise<string[]> {
-  return cachedModule ? ['nightly'] : [];
+  return ready ? ['nightly'] : [];
 }
 
 export async function clearCache(): Promise<void> {
-  cachedModule = null;
+  worker?.terminate();
+  worker = null;
+  ready = false;
   loadingPromise = null;
 }

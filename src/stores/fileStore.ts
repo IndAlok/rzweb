@@ -8,6 +8,8 @@ export interface LoadedFile {
   size: number;
   loadedAt: number;
   path?: string;
+  // AnalysisPage hands this to RizinInstance.open().
+  projectData?: Uint8Array;
 }
 
 export interface RecentFile {

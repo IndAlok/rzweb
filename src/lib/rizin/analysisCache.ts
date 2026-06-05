@@ -1,10 +1,11 @@
 import { openDB, type IDBPDatabase } from 'idb';
 
 const DB_NAME = 'rzweb-analysis-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'analyses';
+const BINARY_STORE_NAME = 'binaries';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024;
-const CACHE_SCHEMA_VERSION = 6;
+const CACHE_SCHEMA_VERSION = 7;
 
 export interface CachedAnalysisSummary {
   hash: string;
@@ -42,12 +43,16 @@ export interface CachedAnalysis {
   };
 }
 
-function hasProjectData(entry: CachedAnalysis): boolean {
-  return entry.projectData instanceof Uint8Array && entry.projectData.byteLength > 0;
-}
+// The binary is immutable per entry, so it lives in its own store and is written
+// once and the frequently rewritten analysis/project record never reserializes it.
+type StoredAnalysis = Omit<CachedAnalysis, 'binaryData'> & {
+  schemaVersion: number;
+  hasBinary: boolean;
+};
 
-function hasBinaryData(entry: CachedAnalysis): boolean {
-  return entry.binaryData instanceof Uint8Array && entry.binaryData.byteLength > 0;
+interface StoredBinary {
+  hash: string;
+  data: Uint8Array;
 }
 
 export interface CacheStats {
@@ -60,6 +65,10 @@ export interface CacheStats {
     timestamp: number;
     dataSize: number;
   }>;
+}
+
+function hasProjectData(entry: StoredAnalysis): boolean {
+  return entry.projectData instanceof Uint8Array && entry.projectData.byteLength > 0;
 }
 
 function hasUsableInfoPayload(value: unknown): boolean {
@@ -76,8 +85,21 @@ async function getDB(): Promise<IDBPDatabase> {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'hash' });
         store.createIndex('timestamp', 'timestamp');
       }
+      if (!db.objectStoreNames.contains(BINARY_STORE_NAME)) {
+        db.createObjectStore(BINARY_STORE_NAME, { keyPath: 'hash' });
+      }
     },
   });
+}
+
+async function deleteEntry(db: IDBPDatabase, hash: string): Promise<void> {
+  await db.delete(STORE_NAME, hash);
+  await db.delete(BINARY_STORE_NAME, hash);
+}
+
+async function attachBinary(db: IDBPDatabase, entry: StoredAnalysis): Promise<CachedAnalysis> {
+  const binary = await db.get(BINARY_STORE_NAME, entry.hash) as StoredBinary | undefined;
+  return { ...entry, binaryData: binary?.data };
 }
 
 export async function computeFileHash(data: Uint8Array): Promise<string> {
@@ -87,7 +109,7 @@ export async function computeFileHash(data: Uint8Array): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function isClearlyIncomplete(entry: CachedAnalysis): boolean {
+function isClearlyIncomplete(entry: StoredAnalysis): boolean {
   if ((entry.schemaVersion ?? 0) < CACHE_SCHEMA_VERSION) return true;
   if (entry.complete === false) return true;
   if (hasProjectData(entry)) return false;
@@ -110,16 +132,16 @@ export async function getCachedAnalysis(
 ): Promise<CachedAnalysis | null> {
   try {
     const db = await getDB();
-    const entry = await db.get(STORE_NAME, hash) as CachedAnalysis | undefined;
+    const entry = await db.get(STORE_NAME, hash) as StoredAnalysis | undefined;
 
     if (!entry) return null;
     if (entry.analysisDepth < analysisDepth) return null;
     if (isClearlyIncomplete(entry)) {
-      await db.delete(STORE_NAME, hash);
+      await deleteEntry(db, hash);
       return null;
     }
 
-    return entry;
+    return attachBinary(db, entry);
   } catch {
     return null;
   }
@@ -128,17 +150,29 @@ export async function getCachedAnalysis(
 export async function setCachedAnalysis(entry: CachedAnalysis): Promise<void> {
   try {
     const db = await getDB();
-    await db.put(STORE_NAME, {
-      ...entry,
+    const { binaryData, ...rest } = entry;
+
+    const binaryAlreadyStored = (await db.count(BINARY_STORE_NAME, entry.hash)) > 0;
+    const providedBinary =
+      binaryData instanceof Uint8Array && binaryData.byteLength > 0 ? binaryData : null;
+
+    if (!binaryAlreadyStored && providedBinary) {
+      await db.put(BINARY_STORE_NAME, { hash: entry.hash, data: providedBinary });
+    }
+
+    const stored: StoredAnalysis = {
+      ...rest,
       schemaVersion: CACHE_SCHEMA_VERSION,
-    });
+      hasBinary: binaryAlreadyStored || providedBinary != null,
+    };
+    await db.put(STORE_NAME, stored);
     await evictIfNeeded(db);
   } catch {
     // IndexedDB writes are best-effort; analysis can still continue without a cache write.
   }
 }
 
-function toSummary(entry: CachedAnalysis): CachedAnalysisSummary {
+function toSummary(entry: StoredAnalysis): CachedAnalysisSummary {
   return {
     hash: entry.hash,
     fileName: entry.fileName,
@@ -146,12 +180,12 @@ function toSummary(entry: CachedAnalysis): CachedAnalysisSummary {
     timestamp: entry.timestamp,
     dataSize: entry.dataSize,
     analysisDepth: entry.analysisDepth,
-    hasBinaryData: hasBinaryData(entry),
+    hasBinaryData: entry.hasBinary,
   };
 }
 
 async function evictIfNeeded(db: IDBPDatabase): Promise<void> {
-  const all = await db.getAll(STORE_NAME) as CachedAnalysis[];
+  const all = await db.getAll(STORE_NAME) as StoredAnalysis[];
   let totalBytes = all.reduce((sum, e) => sum + e.dataSize, 0);
 
   if (totalBytes <= MAX_CACHE_BYTES) return;
@@ -159,7 +193,7 @@ async function evictIfNeeded(db: IDBPDatabase): Promise<void> {
   const sorted = all.sort((a, b) => a.timestamp - b.timestamp);
   for (const entry of sorted) {
     if (totalBytes <= MAX_CACHE_BYTES) break;
-    await db.delete(STORE_NAME, entry.hash);
+    await deleteEntry(db, entry.hash);
     totalBytes -= entry.dataSize;
   }
 }
@@ -167,7 +201,7 @@ async function evictIfNeeded(db: IDBPDatabase): Promise<void> {
 export async function getCacheStats(): Promise<CacheStats> {
   try {
     const db = await getDB();
-    const all = await db.getAll(STORE_NAME) as CachedAnalysis[];
+    const all = await db.getAll(STORE_NAME) as StoredAnalysis[];
     return {
       entryCount: all.length,
       totalBytes: all.reduce((sum, e) => sum + e.dataSize, 0),
@@ -187,7 +221,7 @@ export async function getCacheStats(): Promise<CacheStats> {
 export async function listCachedAnalyses(): Promise<CachedAnalysisSummary[]> {
   try {
     const db = await getDB();
-    const all = await db.getAll(STORE_NAME) as CachedAnalysis[];
+    const all = await db.getAll(STORE_NAME) as StoredAnalysis[];
     return all
       .filter(entry => !isClearlyIncomplete(entry))
       .sort((a, b) => b.timestamp - a.timestamp)
@@ -200,15 +234,15 @@ export async function listCachedAnalyses(): Promise<CachedAnalysisSummary[]> {
 export async function getCachedAnalysisEntry(hash: string): Promise<CachedAnalysis | null> {
   try {
     const db = await getDB();
-    const entry = await db.get(STORE_NAME, hash) as CachedAnalysis | undefined;
+    const entry = await db.get(STORE_NAME, hash) as StoredAnalysis | undefined;
     if (!entry) {
       return null;
     }
     if (isClearlyIncomplete(entry)) {
-      await db.delete(STORE_NAME, hash);
+      await deleteEntry(db, hash);
       return null;
     }
-    return entry;
+    return attachBinary(db, entry);
   } catch {
     return null;
   }
@@ -218,6 +252,7 @@ export async function clearAnalysisCache(): Promise<void> {
   try {
     const db = await getDB();
     await db.clear(STORE_NAME);
+    await db.clear(BINARY_STORE_NAME);
   } catch {
     // Ignore cache-clear failures and leave the current session untouched.
   }
@@ -226,7 +261,7 @@ export async function clearAnalysisCache(): Promise<void> {
 export async function removeCachedAnalysis(hash: string): Promise<void> {
   try {
     const db = await getDB();
-    await db.delete(STORE_NAME, hash);
+    await deleteEntry(db, hash);
   } catch {
     // Ignore cache-delete failures; stale entries will be skipped when detected later.
   }

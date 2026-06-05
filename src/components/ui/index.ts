@@ -1,4 +1,4 @@
-export { Button, buttonVariants, type ButtonProps } from './Button';
+export { Button, type ButtonProps } from './Button';
 export { Input, type InputProps } from './Input';
 export { Progress } from './Progress';
 export {
@@ -26,7 +26,7 @@ export {
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './Tabs';
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './Tooltip';
 export { ScrollArea, ScrollBar } from './ScrollArea';
-export { Badge, badgeVariants, type BadgeProps } from './Badge';
+export { Badge, type BadgeProps } from './Badge';
 export { Spinner } from './Spinner';
 export { CommandPalette } from './CommandPalette';
 export { SettingsDialog } from './SettingsDialog';

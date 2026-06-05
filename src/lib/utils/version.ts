@@ -1,18 +1,25 @@
 let cachedVersion: string | null = null;
 let fetching: Promise<string> | null = null;
 
+function cleanVersionText(text: string): string | null {
+  const version = text.trim();
+  if (!version || version === 'undefined') return null;
+  if (version.length > 80 || /<[/a-z!][\s\S]*>/i.test(version)) return null;
+  return version;
+}
+
 async function fetchVersion(): Promise<string> {
   const envVersion = (import.meta as unknown as { env?: { VITE_RIZIN_VERSION?: string } }).env?.VITE_RIZIN_VERSION;
-  if (envVersion && envVersion !== 'undefined' && envVersion.trim()) {
-    return envVersion.trim();
+  const cleanEnvVersion = envVersion ? cleanVersionText(envVersion) : null;
+  if (cleanEnvVersion) {
+    return cleanEnvVersion;
   }
   
   try {
     const response = await fetch('/VERSION');
     if (response.ok) {
-      const text = await response.text();
-      const version = text.trim();
-      if (version && version !== 'undefined') {
+      const version = cleanVersionText(await response.text());
+      if (version) {
         return version;
       }
     }
@@ -21,11 +28,13 @@ async function fetchVersion(): Promise<string> {
   }
   
   try {
-    const response = await fetch('https://indalok.github.io/rzwasi/VERSION');
+    const base =
+      (import.meta as unknown as { env?: { VITE_WASM_BASE_URL?: string } }).env?.VITE_WASM_BASE_URL?.replace(/\/+$/, '') ||
+      'https://indalok.github.io/rzwasi';
+    const response = await fetch(`${base}/VERSION`);
     if (response.ok) {
-      const text = await response.text();
-      const version = text.trim();
-      if (version && version !== 'undefined') {
+      const version = cleanVersionText(await response.text());
+      if (version) {
         return version;
       }
     }

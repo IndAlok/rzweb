@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import { useSettingsStore, useSessionStore } from '@/stores';
 import { cn } from '@/lib/utils';
+import { Search, ArrowUp, ArrowDown, X } from 'lucide-react';
 import type { RizinCommandHelpEntry, RizinInstance } from '@/lib/rizin';
 
 export interface RizinTerminalRef {
@@ -25,6 +26,8 @@ interface RizinTerminalProps {
   rizin: RizinInstance | null;
   className?: string;
   onReady?: () => void;
+  pendingCommand?: string | null;
+  onPendingCommandConsumed?: () => void;
 }
 
 interface AutocompleteSuggestion {
@@ -40,6 +43,12 @@ interface TerminalAutocompleteState {
   replacementEnd: number;
   endString: string;
   manualSelection: boolean;
+}
+
+interface PaginationState {
+  currentPage: number;
+  renderPage: (page: number) => void;
+  renderAll: () => void;
 }
 
 const EMPTY_AUTOCOMPLETE_STATE: TerminalAutocompleteState = {
@@ -76,16 +85,18 @@ function computeCommonPrefix(values: string[]): string {
 }
 
 export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
-  ({ rizin, className, onReady }, ref) => {
+  ({ rizin, className, onReady, pendingCommand, onPendingCommandConsumed }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const searchAddonRef = useRef<SearchAddon | null>(null);
     const connectedRef = useRef<RizinInstance | null>(null);
+    const paginationRef = useRef<PaginationState | null>(null);
     const inputBuffer = useRef('');
     const cursorPos = useRef(0);
     const historyIndex = useRef(-1);
     const autocompleteRef = useRef<TerminalAutocompleteState>(EMPTY_AUTOCOMPLETE_STATE);
+    const autocompleteSeqRef = useRef(0);
     const commandCatalogRef = useRef<Record<string, RizinCommandHelpEntry>>({});
 
     const {
@@ -98,6 +109,10 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
     const { addToHistory, commandHistory } = useSessionStore();
 
     const [autocompleteState, setAutocompleteState] = useState<TerminalAutocompleteState>(EMPTY_AUTOCOMPLETE_STATE);
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchValue, setSearchValue] = useState('');
+    const [terminalReady, setTerminalReady] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement>(null);
 
     const addToHistoryRef = useRef(addToHistory);
     const commandHistoryRef = useRef(commandHistory);
@@ -123,6 +138,20 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       }
       setAutocompleteView(EMPTY_AUTOCOMPLETE_STATE);
     }, [setAutocompleteView]);
+
+    const runTerminalFind = useCallback((direction: 1 | -1) => {
+      const addon = searchAddonRef.current;
+      if (!addon || !searchValue) return;
+      if (direction === 1) addon.findNext(searchValue, { caseSensitive: false });
+      else addon.findPrevious(searchValue, { caseSensitive: false });
+    }, [searchValue]);
+
+    const closeTerminalFind = useCallback(() => {
+      setSearchOpen(false);
+      setSearchValue('');
+      searchAddonRef.current?.clearDecorations();
+      terminalRef.current?.focus();
+    }, []);
 
     const executeCommand = useCallback(async (command: string) => {
       const term = terminalRef.current;
@@ -190,23 +219,17 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
                 term.writeln('\x1b[35m  [m]\x1b[0m Show more  |  \x1b[35m[a]\x1b[0m Show all  |  \x1b[35m[Enter]\x1b[0m Continue to prompt');
                 term.writeln('\x1b[36m------------------------------------------------------------\x1b[0m');
 
-                (term as any)._paginationState = {
-                  allLines,
+                paginationRef.current = {
                   currentPage: nextPage,
-                  totalPages,
-                  totalLines,
-                  LINES_PER_PAGE,
                   renderPage,
                   renderAll: () => {
                     const CHUNK_SIZE = 50;
                     let currentIdx = end;
-                    (term as any)._renderingAll = true;
 
                     const renderChunk = () => {
                       if (currentIdx >= totalLines) {
                         term.writeln(`\x1b[36m-- End of output (${totalLines} total lines) --\x1b[0m`);
-                        (term as any)._paginationState = null;
-                        (term as any)._renderingAll = false;
+                        paginationRef.current = null;
                         return;
                       }
 
@@ -230,7 +253,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
                 };
               } else {
                 term.writeln(`\x1b[36m-- End of output (${totalLines} total lines) --\x1b[0m`);
-                (term as any)._paginationState = null;
+                paginationRef.current = null;
               }
             };
 
@@ -265,7 +288,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       }
     }, [showPrompt]);
 
-    const updateAutocomplete = useCallback((force = false): TerminalAutocompleteState | null => {
+    const updateAutocomplete = useCallback(async (force = false): Promise<TerminalAutocompleteState | null> => {
       const rz = rizinRef.current;
       if (!rz) {
         hideAutocomplete();
@@ -278,7 +301,11 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
         return null;
       }
 
-      const result = rz.getAutocomplete(inputBuffer.current, cursorPos.current, terminalAutocompleteMaxResults);
+      const seq = ++autocompleteSeqRef.current;
+      const result = await rz.getAutocomplete(inputBuffer.current, cursorPos.current, terminalAutocompleteMaxResults);
+      if (seq !== autocompleteSeqRef.current) {
+        return null;
+      }
       if (!result || result.options.length === 0) {
         hideAutocomplete();
         return null;
@@ -400,89 +427,136 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
     }));
 
     useEffect(() => {
-      if (!containerRef.current || terminalRef.current) return;
+      if (terminalRef.current) return;
 
-      const term = new Terminal({
-        cursorBlink: terminalCursorBlink,
-        convertEol: true,
-        scrollback: terminalScrollback,
-        fontSize: terminalFontSize,
-        fontFamily: 'JetBrains Mono, Fira Code, Consolas, monospace',
-        theme: {
-          background: '#0f172a',
-          foreground: '#e2e8f0',
-          cursor: '#38bdf8',
-          cursorAccent: '#0f172a',
-          selectionBackground: '#334155',
-          black: '#1e293b',
-          red: '#f87171',
-          green: '#4ade80',
-          yellow: '#facc15',
-          blue: '#60a5fa',
-          magenta: '#c084fc',
-          cyan: '#22d3ee',
-          white: '#f8fafc',
-          brightBlack: '#475569',
-          brightRed: '#fca5a5',
-          brightGreen: '#86efac',
-          brightYellow: '#fde047',
-          brightBlue: '#93c5fd',
-          brightMagenta: '#d8b4fe',
-          brightCyan: '#67e8f9',
-          brightWhite: '#ffffff',
-        },
-        allowProposedApi: true,
-      });
+      let disposed = false;
+      let setupFrame = 0;
+      let fitFrame = 0;
+      let term: Terminal | null = null;
+      let resizeObserver: ResizeObserver | null = null;
 
-      const fitAddon = new FitAddon();
-      const searchAddon = new SearchAddon();
-      const clipboardAddon = new ClipboardAddon();
-      const webLinksAddon = new WebLinksAddon();
+      const setup = () => {
+        if (disposed) return;
+        const container = containerRef.current;
+        if (!container) return;
 
-      term.loadAddon(fitAddon);
-      term.loadAddon(searchAddon);
-      term.loadAddon(clipboardAddon);
-      term.loadAddon(webLinksAddon);
-
-      term.open(containerRef.current);
-
-      try {
-        const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => { webglAddon.dispose(); });
-        term.loadAddon(webglAddon);
-      } catch {
-        // Ignore WebGL acceleration issues and keep the software renderer.
-      }
-
-      fitAddon.fit();
-
-      terminalRef.current = term;
-      fitAddonRef.current = fitAddon;
-      searchAddonRef.current = searchAddon;
-
-      term.writeln('\x1b[1;36m============================================================\x1b[0m');
-      term.writeln('\x1b[1;36m|\x1b[0m          \x1b[1;37mRzWeb - Rizin Web Interface\x1b[0m                      \x1b[1;36m|\x1b[0m');
-      term.writeln('\x1b[1;36m|\x1b[0m          Browser-based reverse engineering                \x1b[1;36m|\x1b[0m');
-      term.writeln('\x1b[1;36m============================================================\x1b[0m');
-      term.writeln('');
-      term.writeln('\x1b[33mWaiting for Rizin...\x1b[0m');
-
-      onReady?.();
-
-      const handleResize = () => {
-        try {
-          fitAddon.fit();
-        } catch {
-          // Ignore fit failures during transient layout changes.
+        // Opening xterm into a 0x0 container makes its renderer compute
+        // undefined dimensions, wait for a layout before opening.
+        if (container.clientWidth === 0 || container.clientHeight === 0) {
+          setupFrame = requestAnimationFrame(setup);
+          return;
         }
+
+        term = new Terminal({
+          cursorBlink: terminalCursorBlink,
+          convertEol: true,
+          scrollback: terminalScrollback,
+          fontSize: terminalFontSize,
+          fontFamily: 'JetBrains Mono, Fira Code, Consolas, monospace',
+          theme: {
+            background: '#0f172a',
+            foreground: '#e2e8f0',
+            cursor: '#38bdf8',
+            cursorAccent: '#0f172a',
+            selectionBackground: '#334155',
+            black: '#1e293b',
+            red: '#f87171',
+            green: '#4ade80',
+            yellow: '#facc15',
+            blue: '#60a5fa',
+            magenta: '#c084fc',
+            cyan: '#22d3ee',
+            white: '#f8fafc',
+            brightBlack: '#475569',
+            brightRed: '#fca5a5',
+            brightGreen: '#86efac',
+            brightYellow: '#fde047',
+            brightBlue: '#93c5fd',
+            brightMagenta: '#d8b4fe',
+            brightCyan: '#67e8f9',
+            brightWhite: '#ffffff',
+          },
+          allowProposedApi: true,
+        });
+
+        const fitAddon = new FitAddon();
+        const searchAddon = new SearchAddon();
+        const clipboardAddon = new ClipboardAddon();
+        const webLinksAddon = new WebLinksAddon();
+
+        term.loadAddon(fitAddon);
+        term.loadAddon(searchAddon);
+        term.loadAddon(clipboardAddon);
+        term.loadAddon(webLinksAddon);
+
+        term.open(container);
+
+        term.attachCustomKeyEventHandler((event) => {
+          if (
+            event.type === 'keydown' &&
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey &&
+            (event.key === 'f' || event.key === 'F')
+          ) {
+            event.preventDefault();
+            setSearchOpen(true);
+            return false;
+          }
+          return true;
+        });
+
+        try {
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => { webglAddon.dispose(); });
+          term.loadAddon(webglAddon);
+        } catch {
+          // Ignore WebGL acceleration issues and keep the software renderer.
+        }
+
+        fitAddon.fit();
+
+        terminalRef.current = term;
+        fitAddonRef.current = fitAddon;
+        searchAddonRef.current = searchAddon;
+
+        term.writeln('\x1b[1;36m============================================================\x1b[0m');
+        term.writeln('\x1b[1;36m|\x1b[0m          \x1b[1;37mRzWeb - Rizin Web Interface\x1b[0m                      \x1b[1;36m|\x1b[0m');
+        term.writeln('\x1b[1;36m|\x1b[0m          Browser-based reverse engineering                \x1b[1;36m|\x1b[0m');
+        term.writeln('\x1b[1;36m============================================================\x1b[0m');
+        term.writeln('');
+        term.writeln('\x1b[33mWaiting for Rizin...\x1b[0m');
+
+        onReady?.();
+
+        const refit = () => {
+          cancelAnimationFrame(fitFrame);
+          fitFrame = requestAnimationFrame(() => {
+            try {
+              fitAddon.fit();
+            } catch {
+              // Transient layout, ignore.
+            }
+          });
+        };
+        resizeObserver = new ResizeObserver(refit);
+        resizeObserver.observe(container);
+        setTerminalReady(true);
       };
 
-      window.addEventListener('resize', handleResize);
+      setupFrame = requestAnimationFrame(setup);
 
       return () => {
-        window.removeEventListener('resize', handleResize);
-        term.dispose();
+        disposed = true;
+        cancelAnimationFrame(setupFrame);
+        cancelAnimationFrame(fitFrame);
+        resizeObserver?.disconnect();
+        if (term) {
+          term.dispose();
+        }
         terminalRef.current = null;
+        fitAddonRef.current = null;
+        searchAddonRef.current = null;
+        setTerminalReady(false);
       };
     }, [onReady, terminalCursorBlink, terminalFontSize, terminalScrollback]);
 
@@ -507,7 +581,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       showPrompt();
 
       const dataHandler = term.onData((data) => {
-        const paginationState = (term as any)._paginationState;
+        const paginationState = paginationRef.current;
         if (paginationState) {
           if (data === 'm' || data === 'M') {
             term.writeln('');
@@ -520,7 +594,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
             return;
           }
           if (data === '\r' || data === '\n') {
-            (term as any)._paginationState = null;
+            paginationRef.current = null;
             term.writeln('');
             showPrompt();
             return;
@@ -574,19 +648,21 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
             }
           }
 
-          const nextState = updateAutocomplete(true);
-          if (!nextState) {
-            return;
-          }
+          void (async () => {
+            const nextState = await updateAutocomplete(true);
+            if (!nextState) {
+              return;
+            }
 
-          if (nextState.suggestions.length === 1) {
-            void acceptAutocomplete(nextState);
-            return;
-          }
+            if (nextState.suggestions.length === 1) {
+              void acceptAutocomplete(nextState);
+              return;
+            }
 
-          if (expandCommonPrefix(nextState)) {
-            void updateAutocomplete(true);
-          }
+            if (expandCommonPrefix(nextState)) {
+              void updateAutocomplete(true);
+            }
+          })();
           return;
         }
 
@@ -715,8 +791,33 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       renderInputLine,
       rizin,
       showPrompt,
+      terminalReady,
       updateAutocomplete,
     ]);
+
+    // Run a cmd pushed from the cmd palette as if typed at the prompt,
+    // overwriting any partial i/o already on the line.
+    useEffect(() => {
+      const term = terminalRef.current;
+      if (!term || !pendingCommand) return;
+      if (!rizinRef.current || connectedRef.current !== rizinRef.current) return;
+
+      hideAutocomplete();
+      inputBuffer.current = pendingCommand;
+      cursorPos.current = pendingCommand.length;
+      renderInputLine();
+      term.write('\r\n');
+      inputBuffer.current = '';
+      cursorPos.current = 0;
+      addToHistoryRef.current(pendingCommand);
+      historyIndex.current = -1;
+      void executeCommand(pendingCommand).then(() => showPrompt());
+      onPendingCommandConsumed?.();
+    }, [pendingCommand, executeCommand, hideAutocomplete, renderInputLine, showPrompt, onPendingCommandConsumed]);
+
+    useEffect(() => {
+      if (searchOpen) searchInputRef.current?.focus();
+    }, [searchOpen]);
 
     useEffect(() => {
       if (fitAddonRef.current) {
@@ -733,6 +834,41 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
     return (
       <div className={cn('terminal-container relative h-full w-full', className)}>
         <div ref={containerRef} className="h-full w-full" />
+        {searchOpen && (
+          <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/95 px-2 py-1 shadow-xl backdrop-blur">
+            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <input
+              ref={searchInputRef}
+              value={searchValue}
+              onChange={(event) => {
+                const value = event.target.value;
+                setSearchValue(value);
+                if (value) searchAddonRef.current?.findNext(value, { caseSensitive: false, incremental: true });
+                else searchAddonRef.current?.clearDecorations();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  runTerminalFind(event.shiftKey ? -1 : 1);
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  closeTerminalFind();
+                }
+              }}
+              placeholder="Find in terminal…"
+              className="w-44 bg-transparent text-xs text-slate-100 outline-none placeholder:text-slate-500"
+            />
+            <button onClick={() => runTerminalFind(-1)} title="Previous (Shift+Enter)" className="rounded p-0.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button onClick={() => runTerminalFind(1)} title="Next (Enter)" className="rounded p-0.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+            <button onClick={closeTerminalFind} title="Close (Esc)" className="rounded p-0.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {autocompleteState.visible && (
           <div className="absolute bottom-3 left-3 z-10 max-w-[min(40rem,calc(100%-1.5rem))] overflow-hidden rounded-md border border-sky-500/30 bg-slate-950/95 shadow-2xl backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-3 py-2 text-[10px] font-mono uppercase tracking-wide text-slate-400">

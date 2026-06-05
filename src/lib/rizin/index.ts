@@ -1,5 +1,4 @@
 export { loadRizinModule, getCachedVersions, clearCache } from './RizinLoader';
-export type { RizinModule, LoadProgress, ProgressCallback } from './RizinLoader';
 export { RizinInstance } from './RizinInstance';
 export type {
   RizinFile,
@@ -8,6 +7,8 @@ export type {
   RizinNotice,
   RizinAutocompleteResult,
   RizinCommandHelpEntry,
+  XrefEntry,
+  XrefsResult,
 } from './RizinInstance';
 export {
   computeFileHash,
@@ -20,3 +21,5 @@ export {
   removeCachedAnalysis,
 } from './analysisCache';
 export type { CachedAnalysis, CachedAnalysisSummary, CacheStats } from './analysisCache';
+export { encodeProjectBundle, decodeProjectBundle, isProjectBundle } from './projectBundle';
+export type { ProjectBundle } from './projectBundle';

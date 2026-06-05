@@ -1,16 +1,108 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 
-import { useFileStore, useRizinStore, useUIStore, useSettingsStore } from '@/stores';
-import { loadRizinModule, getCachedVersions, RizinInstance, type RizinNotice } from '@/lib/rizin';
-import { RizinTerminal, type RizinTerminalRef } from '@/components/terminal';
-import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel } from '@/components/views';
+import { useFileStore, useRizinStore, useUIStore, useSettingsStore, type ActivePanel } from '@/stores';
+import { loadRizinModule, getCachedVersions, RizinInstance, decodeProjectBundle, type RizinNotice } from '@/lib/rizin';
+import { useKeyboardShortcuts } from '@/hooks';
+import { RizinTerminal } from '@/components/terminal';
+import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel, XrefsView, DecompilerView } from '@/components/views';
 import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog } from '@/components/ui';
-import { cn } from '@/lib/utils';
-import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle } from 'lucide-react';
+import { cn, stripAnsi } from '@/lib/utils';
+import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle, Save, FolderOpen, Braces, ArrowLeftRight } from 'lucide-react';
 import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection } from '@/types/rizin';
+
+function useResponsiveLayout() {
+  const read = () => ({
+    narrow: typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+    portrait: typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
+  });
+  const [layout, setLayout] = useState(read);
+
+  useEffect(() => {
+    const narrowMedia = window.matchMedia('(max-width: 767px)');
+    const portraitMedia = window.matchMedia('(orientation: portrait)');
+    const update = () => setLayout({ narrow: narrowMedia.matches, portrait: portraitMedia.matches });
+    update();
+    narrowMedia.addEventListener('change', update);
+    portraitMedia.addEventListener('change', update);
+    return () => {
+      narrowMedia.removeEventListener('change', update);
+      portraitMedia.removeEventListener('change', update);
+    };
+  }, []);
+
+  return layout;
+}
+
+// Pull the binary's base addr out of whichever info payload carries it.
+function readBaddr(info: unknown): number | null {
+  if (!info || typeof info !== 'object') return null;
+  const record = info as Record<string, unknown>;
+  const binaryInfo = record.binaryInfo as Record<string, unknown> | undefined;
+  if (binaryInfo && typeof binaryInfo.baddr === 'number') return binaryInfo.baddr;
+  const overview = record.overview as Record<string, unknown> | undefined;
+  const bin = overview?.bin as Record<string, unknown> | undefined;
+  if (bin && typeof bin.baddr === 'number') return bin.baddr;
+  if (typeof record.baddr === 'number') return record.baddr;
+  return null;
+}
+
+interface RawDisasmOp {
+  offset?: number;
+  size?: number;
+  bytes?: string;
+  opcode?: string;
+  disasm?: string;
+  family?: string;
+  type?: string;
+  type_num?: number;
+  type2_num?: number;
+  comment?: string;
+  jump?: number;
+  fail?: number;
+  refs?: { addr: number; type: string }[];
+}
+
+interface RawDisasm {
+  ops?: RawDisasmOp[];
+  instructions?: RawDisasmOp[];
+}
+
+interface RawGraphBlock {
+  id?: number | string;
+  offset?: number;
+  addr?: number | string;
+  vaddr?: number | string;
+  title?: string;
+  body?: string;
+  ops?: RawDisasmOp[];
+  jump?: number;
+  fail?: number;
+  out_nodes?: Array<number | string>;
+}
+
+interface RawGraphContainer {
+  nodes?: RawGraphBlock[];
+  blocks?: RawGraphBlock[];
+  graph?: { nodes?: RawGraphBlock[]; blocks?: RawGraphBlock[] };
+}
+
+type GraphElements = {
+  nodes: Array<{ id: string; label: string; body?: string; offset?: number }>;
+  edges: Array<{ source: string; target: string; type?: 'jump' | 'fail' | 'call' }>;
+};
+
+function parseAddress(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return undefined;
+  const match = value.match(/0x[0-9a-fA-F]+|[0-9a-fA-F]{6,}/);
+  if (!match) return undefined;
+  const raw = match[0];
+  const parsed = raw.startsWith('0x') ? Number.parseInt(raw, 16) : Number.parseInt(raw, 16);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
@@ -18,10 +110,15 @@ export default function AnalysisPage() {
   const version = searchParams.get('version') || 'latest';
   const shouldCache = searchParams.get('cache') === 'true';
 
-  const { currentFile, clearCurrentFile } = useFileStore();
-  const { setModule, isLoading, setLoading, loadProgress, setLoadProgress, loadPhase, setLoadPhase, setLoadMessage, setCachedVersions, setError } = useRizinStore();
-  const { sidebarOpen, setSidebarOpen, setSettingsDialogOpen, currentAddress, setCurrentAddress, currentView, setCurrentView, selectedFunction, setSelectedFunction } = useUIStore();
+  const { currentFile, clearCurrentFile, setCurrentFile } = useFileStore();
+  const { isLoading, setLoading, loadProgress, setLoadProgress, loadPhase, setLoadPhase, setLoadMessage, setCachedVersions, setError } = useRizinStore();
+  const { sidebarOpen, setSidebarOpen, splitDirection, setSettingsDialogOpen, currentAddress, setCurrentAddress, currentView, setCurrentView, selectedFunction, setSelectedFunction } = useUIStore();
   const { ioCache, analysisDepth, noAnalysis, maxOutputSizeMb } = useSettingsStore();
+  const { narrow, portrait } = useResponsiveLayout();
+  const stacked = narrow || portrait;
+  const panelDirection = stacked ? 'vertical' : splitDirection;
+
+  useKeyboardShortcuts();
 
   const [activeInstance, setActiveInstance] = useState<RizinInstance | null>(null);
   const [analysisReady, setAnalysisReady] = useState(false);
@@ -29,12 +126,12 @@ export default function AnalysisPage() {
   const [alerts, setAlerts] = useState<RizinNotice[]>([]);
   const [disasmLines, setDisasmLines] = useState<RzDisasmLine[]>([]);
   const [isLoadingDisasm, setIsLoadingDisasm] = useState(false);
-  const [graphNodes, setGraphNodes] = useState<Array<{id: string; label: string; body?: string}>>([]);
-  const [graphEdges, setGraphEdges] = useState<Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}>>([]);
-  const terminalRef = useRef<RizinTerminalRef>(null);
+  const [graphNodes, setGraphNodes] = useState<GraphElements['nodes']>([]);
+  const [graphEdges, setGraphEdges] = useState<GraphElements['edges']>([]);
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null);
+  const [projectAction, setProjectAction] = useState<'save' | 'load' | null>(null);
   const functionDetailRequestRef = useRef(0);
-
-  void analysisRevision;
+  const projectInputRef = useRef<HTMLInputElement>(null);
 
   const functions = !activeInstance?.analysis || !analysisReady
     ? []
@@ -52,13 +149,31 @@ export default function AnalysisPage() {
     ? []
     : activeInstance.analysis.exports as RzExport[];
 
-  const sections = !activeInstance?.analysis || !analysisReady
-    ? []
-    : activeInstance.analysis.sections as RzSection[];
+  const sections = useMemo<RzSection[]>(() => {
+    void analysisRevision;
+    if (!activeInstance?.analysis || !analysisReady) return [];
+    return activeInstance.analysis.sections as RzSection[];
+  }, [activeInstance, analysisReady, analysisRevision]);
 
   const infoPayload = !activeInstance?.analysis || !analysisReady
     ? null
     : activeInstance.analysis.info;
+
+  // Hex view span
+  const hexLayout = useMemo(() => {
+    let min = Infinity;
+    let max = 0;
+    for (const section of sections) {
+      if (typeof section.vaddr === 'number' && typeof section.vsize === 'number' && section.vaddr > 0 && section.vsize > 0) {
+        min = Math.min(min, section.vaddr);
+        max = Math.max(max, section.vaddr + section.vsize);
+      }
+    }
+    if (min !== Infinity && max > min) {
+      return { base: min, size: max - min };
+    }
+    return { base: readBaddr(infoPayload) ?? 0, size: currentFile?.size ?? 0 };
+  }, [sections, infoPayload, currentFile?.size]);
 
   useEffect(() => {
     if (!activeInstance) {
@@ -110,19 +225,18 @@ export default function AnalysisPage() {
       setCurrentAddress(0);
 
       try {
-        const rizinModule = await loadRizinModule({
+        const worker = await loadRizinModule({
           onProgress: ({ phase, progress, message }) => {
-            setLoadPhase(phase as any);
+            setLoadPhase(phase);
             setLoadProgress(progress);
             setLoadMessage(message);
           },
         });
 
-        setModule(rizinModule);
         const versions = await getCachedVersions();
         setCachedVersions(versions);
 
-        rz = new RizinInstance(rizinModule);
+        rz = new RizinInstance(worker);
         setLoadPhase('analyzing');
         setLoadProgress(78);
         setLoadMessage(noAnalysis ? 'Opening binary without auto-analysis...' : 'Running initial analysis and indexing binary data...');
@@ -133,7 +247,7 @@ export default function AnalysisPage() {
           maxOutputBytes: maxOutputSizeMb * 1024 * 1024,
           enableCache: shouldCache,
           extraArgs: ['-e', 'scr.color=0', '-e', 'scr.utf8=false'],
-        });
+        }, currentFile.projectData);
 
         setActiveInstance(rz);
         const initialSeek = Number.parseInt(rz.getCurrentAddress(), 16);
@@ -162,13 +276,13 @@ export default function AnalysisPage() {
     initRizin();
 
     return () => {
-      rz?.close();
+      void rz?.close();
     };
-  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setModule, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb, setCurrentAddress, setSelectedFunction]);
+  }, [version, shouldCache, currentFile, navigate, setLoading, setLoadPhase, setLoadProgress, setLoadMessage, setCachedVersions, setError, ioCache, analysisDepth, noAnalysis, maxOutputSizeMb, setCurrentAddress, setSelectedFunction]);
 
   const buildDisassemblyLines = useCallback((disasm: unknown): RzDisasmLine[] => {
-    const parsed = disasm as { ops?: any[]; instructions?: any[] } | any[] | null;
-    const ops = Array.isArray(parsed)
+    const parsed = disasm as RawDisasm | RawDisasmOp[] | null;
+    const ops: RawDisasmOp[] = Array.isArray(parsed)
       ? parsed
       : Array.isArray(parsed?.ops)
         ? parsed.ops
@@ -176,94 +290,87 @@ export default function AnalysisPage() {
           ? parsed.instructions
           : [];
 
-    if (!ops.length) {
-      return [];
-    }
-
-    return ops.map((op: any) => ({
-      offset: op.offset || 0,
-      size: op.size || 0,
-      bytes: op.bytes || '',
-      opcode: op.opcode || op.disasm || '',
-      disasm: op.disasm || op.opcode || '',
-      family: op.family || '',
-      type: op.type || '',
-      type_num: op.type_num || 0,
-      type2_num: op.type2_num || 0,
+    return ops.map((op) => ({
+      offset: op.offset ?? 0,
+      size: op.size ?? 0,
+      bytes: op.bytes ?? '',
+      // `disasm` resolves flags/symbols (e.g. `call sym.imp.printf`) where
+      // `opcode` keeps raw addr; prefer the former. Strip ANSI in case
+      // scr.color leaked escape codes into the JSON field.
+      opcode: stripAnsi(op.opcode ?? op.disasm ?? ''),
+      disasm: stripAnsi(op.disasm ?? op.opcode ?? ''),
+      family: op.family ?? '',
+      type: op.type ?? '',
+      type_num: op.type_num ?? 0,
+      type2_num: op.type2_num ?? 0,
       comment: op.comment,
       jump: op.jump,
+      fail: op.fail,
       refs: op.refs,
     }));
   }, []);
 
-  const buildGraphElements = useCallback((graph: unknown) => {
-    const parsed = graph as any;
-
-    let graphBlocks: any[] = [];
-    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((node: any) => typeof node === 'object' && node && ('offset' in node || 'id' in node || 'jump' in node || 'fail' in node || Array.isArray(node.ops)))) {
-      graphBlocks = parsed;
-    } else if (Array.isArray(parsed) && parsed.length > 0) {
-      graphBlocks = parsed[0]?.blocks || parsed[0]?.nodes || [];
-    } else if (parsed?.nodes) {
-      graphBlocks = parsed.nodes;
-    } else if (parsed?.blocks) {
-      graphBlocks = parsed.blocks;
-    } else if (parsed?.graph?.nodes) {
-      graphBlocks = parsed.graph.nodes;
-    } else if (parsed?.graph?.blocks) {
-      graphBlocks = parsed.graph.blocks;
+  const buildGraphElements = useCallback((graph: unknown): GraphElements => {
+    let blocks: RawGraphBlock[] = [];
+    if (Array.isArray(graph)) {
+      const arr = graph as RawGraphBlock[];
+      const looksLikeBlocks = arr.length > 0 && arr.every(
+        (node) => !!node && typeof node === 'object' &&
+          ('offset' in node || 'id' in node || 'jump' in node || 'fail' in node || Array.isArray(node.ops))
+      );
+      if (looksLikeBlocks) {
+        blocks = arr;
+      } else if (arr.length > 0) {
+        const first = arr[0] as RawGraphContainer;
+        blocks = first?.blocks ?? first?.nodes ?? [];
+      }
+    } else if (graph && typeof graph === 'object') {
+      const container = graph as RawGraphContainer;
+      blocks = container.nodes ?? container.blocks ?? container.graph?.nodes ?? container.graph?.blocks ?? [];
     }
 
-    if (!graphBlocks.length) {
-      return {
-        nodes: [] as Array<{id: string; label: string; body?: string}>,
-        edges: [] as Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}>,
-      };
+    if (!blocks.length) {
+      return { nodes: [], edges: [] };
     }
 
     const offsetToId = new Map<number, string>();
-    const nodes = graphBlocks.map((node: any, idx: number) => {
+    const nodes = blocks.map((node, idx) => {
       const nodeId = String(node.id ?? node.offset ?? idx);
-      if (typeof node.offset === 'number') {
-        offsetToId.set(node.offset, nodeId);
+      const nodeOffset = parseAddress(node.offset ?? node.addr ?? node.vaddr ?? node.id ?? node.title ?? node.body);
+      if (typeof nodeOffset === 'number') {
+        offsetToId.set(nodeOffset, nodeId);
       }
-
       return {
         id: nodeId,
-        label: node.title || `0x${(node.offset ?? 0).toString(16)}`,
-        body: node.body || node.ops?.map((op: any) => op.disasm || op.opcode || '').join('\n') || '',
+        label: node.title ?? `0x${(nodeOffset ?? 0).toString(16)}`,
+        body: stripAnsi(node.body ?? node.ops?.map((op) => op.disasm ?? op.opcode ?? '').join('\n') ?? ''),
+        offset: nodeOffset,
       };
     });
 
-    const edges: Array<{source: string; target: string; type?: 'jump' | 'fail' | 'call'}> = [];
-    graphBlocks.forEach((node: any) => {
+    const edges: GraphElements['edges'] = [];
+    blocks.forEach((node) => {
       const sourceId = String(node.id ?? node.offset ?? 0);
       const outNodes = Array.isArray(node.out_nodes) ? node.out_nodes : [];
 
       if (outNodes.length > 0) {
-        outNodes.forEach((targetId: number, idx: number) => {
-          const edgeType = outNodes.length === 2
-            ? (idx === 0 ? 'jump' as const : 'fail' as const)
-            : 'jump' as const;
-          edges.push({ source: sourceId, target: String(targetId), type: edgeType });
+        outNodes.forEach((targetId, idx) => {
+          const edgeType = outNodes.length === 2 ? (idx === 0 ? 'jump' as const : 'fail' as const) : 'jump' as const;
+          const targetAddress = parseAddress(targetId);
+          edges.push({
+            source: sourceId,
+            target: targetAddress == null ? String(targetId) : offsetToId.get(targetAddress) ?? String(targetId),
+            type: edgeType,
+          });
         });
         return;
       }
 
       if (typeof node.jump === 'number') {
-        edges.push({
-          source: sourceId,
-          target: offsetToId.get(node.jump) ?? String(node.jump),
-          type: 'jump',
-        });
+        edges.push({ source: sourceId, target: offsetToId.get(node.jump) ?? String(node.jump), type: 'jump' });
       }
-
       if (typeof node.fail === 'number') {
-        edges.push({
-          source: sourceId,
-          target: offsetToId.get(node.fail) ?? String(node.fail),
-          type: 'fail',
-        });
+        edges.push({ source: sourceId, target: offsetToId.get(node.fail) ?? String(node.fail), type: 'fail' });
       }
     });
 
@@ -308,6 +415,99 @@ export default function AnalysisPage() {
     void loadFunctionPresentation(fcn.offset);
   }, [setCurrentAddress, setSelectedFunction, setCurrentView, currentView, loadFunctionPresentation]);
 
+  const handleSeek = useCallback((address: number, view?: ActivePanel) => {
+    setCurrentAddress(address);
+    if (view) setCurrentView(view);
+  }, [setCurrentAddress, setCurrentView]);
+
+  const handleRunCommand = useCallback((command: string) => {
+    setPendingCommand(command);
+    setCurrentView('terminal');
+  }, [setCurrentView]);
+
+  const clearPendingCommand = useCallback(() => setPendingCommand(null), []);
+
+  const handleSaveProject = useCallback(async () => {
+    if (!activeInstance || !currentFile) return;
+
+    setProjectAction('save');
+    try {
+      const data = await activeInstance.exportProject();
+      const buffer = new ArrayBuffer(data.byteLength);
+      new Uint8Array(buffer).set(data);
+      const blob = new Blob([buffer], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const baseName = currentFile.name.replace(/[\\/:*?"<>|]+/g, '_') || 'rzweb-project';
+      link.href = url;
+      link.download = `${baseName}.rzdb`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Project saved');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to save project.');
+    } finally {
+      setProjectAction(null);
+    }
+  }, [activeInstance, currentFile]);
+
+  const handleLoadProjectClick = useCallback(() => {
+    projectInputRef.current?.click();
+  }, []);
+
+  const handleProjectFileSelected = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const projectFile = event.target.files?.[0];
+    event.target.value = '';
+    if (!projectFile) return;
+
+    setProjectAction('load');
+    try {
+      const bytes = new Uint8Array(await projectFile.arrayBuffer());
+
+      // Self-contained RzWeb bundle: swap in the embedded binary + project and
+      // let the open effect re-run a full cold restore (keeps currentFile in
+      // sync, works even when the open binary differs from the project's).
+      const bundle = decodeProjectBundle(bytes);
+      if (bundle) {
+        setCurrentFile({
+          id: crypto.randomUUID(),
+          name: bundle.name,
+          data: bundle.binary,
+          size: bundle.binary.byteLength,
+          loadedAt: Date.now(),
+          projectData: bundle.rzdb,
+        });
+        toast.success('Project loaded');
+        return;
+      }
+
+      // Rizin .rzdb: load it into the currently-open matching binary.
+      if (!activeInstance) {
+        toast.error('Open a binary before loading a raw Rizin project.');
+        return;
+      }
+      await activeInstance.importProject(bytes);
+      setAnalysisReady(true);
+      setAnalysisRevision(v => v + 1);
+      setAlerts(activeInstance.allNotices);
+      setDisasmLines([]);
+      setGraphNodes([]);
+      setGraphEdges([]);
+      setSelectedFunction(null);
+      const seek = Number.parseInt(activeInstance.getCurrentAddress(), 16);
+      if (!Number.isNaN(seek)) {
+        setCurrentAddress(seek);
+      }
+      toast.success('Project loaded');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to load project.');
+    } finally {
+      setProjectAction(null);
+    }
+  }, [activeInstance, setCurrentAddress, setSelectedFunction, setCurrentFile]);
+
   useEffect(() => {
     if (!activeInstance || !selectedFunction || currentAddress <= 0) {
       return;
@@ -332,7 +532,7 @@ export default function AnalysisPage() {
   ]);
 
   const handleGoHome = useCallback(() => {
-    activeInstance?.close();
+    void activeInstance?.close();
     clearCurrentFile();
     navigate('/');
   }, [activeInstance, clearCurrentFile, navigate]);
@@ -344,12 +544,12 @@ export default function AnalysisPage() {
           <TerminalIcon className="h-16 w-16 animate-pulse text-primary" />
         </div>
         <h2 className="mb-2 text-2xl font-semibold text-foreground">
-          {loadPhase === 'downloading' ? 'Downloading Rizin...' : loadPhase === 'analyzing' ? 'Analyzing Binary...' : 'Initializing...'}
+          {loadPhase === 'downloading' ? 'Loading Rizin' : loadPhase === 'analyzing' ? 'Analyzing binary' : 'Preparing session'}
         </h2>
         <p className="mb-6 max-w-md text-center text-muted-foreground">
           {loadPhase === 'analyzing'
-            ? 'Initial analysis is being completed now so functions, strings, sections, and graphs are ready without manual aa; ... chaining.'
-            : 'Please wait'}
+            ? 'Mapping functions, strings, sections, and control flow.'
+            : 'This will only take a moment.'}
         </p>
         <div className="w-80"><Progress value={loadProgress} showValue /></div>
       </div>
@@ -385,6 +585,31 @@ export default function AnalysisPage() {
           )}
 
           <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+            <input
+              ref={projectInputRef}
+              type="file"
+              accept=".rzdb,application/octet-stream"
+              className="hidden"
+              onChange={handleProjectFileSelected}
+            />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleSaveProject}
+              disabled={!activeInstance || projectAction !== null}
+              title={projectAction === 'save' ? 'Saving project' : 'Save .rzdb project'}
+            >
+              <Save className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleLoadProjectClick}
+              disabled={!activeInstance || projectAction !== null}
+              title={projectAction === 'load' ? 'Loading project' : 'Load .rzdb project'}
+            >
+              <FolderOpen className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon-sm" onClick={() => setSettingsDialogOpen(true)} title="Settings">
               <Settings className="h-4 w-4" />
             </Button>
@@ -395,7 +620,7 @@ export default function AnalysisPage() {
         </div>
 
         <div className="border-t border-border/70 px-2 py-2 sm:px-4">
-          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
+          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as ActivePanel)}>
             <div className="overflow-x-auto scrollbar-hidden">
               <TabsList className="h-9 min-w-max justify-start bg-muted/50">
                 <TabsTrigger value="terminal" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
@@ -403,6 +628,9 @@ export default function AnalysisPage() {
                 </TabsTrigger>
                 <TabsTrigger value="disasm" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
                   <Code className="h-3.5 w-3.5" /><span>Disasm</span>
+                </TabsTrigger>
+                <TabsTrigger value="decompiler" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <Braces className="h-3.5 w-3.5" /><span>Decompiler</span>
                 </TabsTrigger>
                 <TabsTrigger value="hex" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
                   <Layout className="h-3.5 w-3.5" /><span>Hex</span>
@@ -412,6 +640,9 @@ export default function AnalysisPage() {
                 </TabsTrigger>
                 <TabsTrigger value="graph" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
                   <Share2 className="h-3.5 w-3.5" /><span>Graph</span>
+                </TabsTrigger>
+                <TabsTrigger value="xrefs" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
+                  <ArrowLeftRight className="h-3.5 w-3.5" /><span>Xrefs</span>
                 </TabsTrigger>
                 <TabsTrigger value="imports" className="gap-1 px-2 text-xs sm:gap-1.5 sm:px-3">
                   <Package className="h-3.5 w-3.5" /><span>Imports</span>
@@ -460,23 +691,38 @@ export default function AnalysisPage() {
       )}
 
       <div className="flex-1 overflow-hidden">
-        <PanelGroup direction="horizontal">
+        <PanelGroup direction={panelDirection}>
           {sidebarOpen && (
             <>
-              <Panel defaultSize={20} minSize={15} maxSize={40} className="bg-card">
-                <FunctionsView functions={functions} onSelect={handleFunctionSelect} />
+              <Panel
+                defaultSize={stacked ? 34 : 20}
+                minSize={stacked ? 22 : 15}
+                maxSize={stacked ? 55 : 40}
+                className="bg-card"
+              >
+                <FunctionsView
+                  functions={functions}
+                  onSelect={handleFunctionSelect}
+                  className={panelDirection === 'vertical' ? 'border-b border-r-0' : undefined}
+                />
               </Panel>
-              <PanelResizeHandle className="w-1 bg-border/50 hover:bg-primary/30 transition-colors" />
+              <PanelResizeHandle
+                className={cn(
+                  'bg-border/50 transition-colors hover:bg-primary/30',
+                  panelDirection === 'vertical' ? 'h-1' : 'w-1'
+                )}
+              />
             </>
           )}
           
           <Panel>
             <div className="h-full relative bg-[#0f172a]">
               {currentView === 'terminal' && activeInstance && (
-                <RizinTerminal 
-                  ref={terminalRef} 
-                  rizin={activeInstance} 
-                  className="h-full w-full" 
+                <RizinTerminal
+                  rizin={activeInstance}
+                  className="h-full w-full"
+                  pendingCommand={pendingCommand}
+                  onPendingCommandConsumed={clearPendingCommand}
                 />
               )}
               {currentView === 'disasm' && (
@@ -495,9 +741,11 @@ export default function AnalysisPage() {
                   )}
                 </div>
               )}
-              {currentView === 'hex' && currentFile && <HexView data={currentFile.data} offset={currentAddress} />}
+              {currentView === 'decompiler' && activeInstance && <DecompilerView rizin={activeInstance} address={currentAddress} functionName={selectedFunction} />}
+              {currentView === 'hex' && activeInstance && <HexView rizin={activeInstance} baseAddress={hexLayout.base} totalSize={hexLayout.size} />}
               {currentView === 'strings' && <StringsView strings={strings} onSelect={(s) => setCurrentAddress(s.vaddr)} />}
-              {currentView === 'graph' && <GraphView nodes={graphNodes} edges={graphEdges} />}
+              {currentView === 'graph' && <GraphView nodes={graphNodes} edges={graphEdges} currentAddress={currentAddress} onSeek={setCurrentAddress} />}
+              {currentView === 'xrefs' && activeInstance && <XrefsView rizin={activeInstance} address={currentAddress} onSeek={setCurrentAddress} />}
               {currentView === 'imports' && <ImportsView imports={imports} onNavigate={setCurrentAddress} />}
               {currentView === 'exports' && <ExportsView exports={exports} onNavigate={setCurrentAddress} />}
               {currentView === 'sections' && <SectionsView sections={sections} onNavigate={setCurrentAddress} />}
@@ -521,7 +769,13 @@ export default function AnalysisPage() {
         </div>
       </footer>
 
-      <CommandPalette />
+      <CommandPalette
+        functions={functions}
+        strings={strings}
+        onSeek={handleSeek}
+        onSelectFunction={handleFunctionSelect}
+        onRunCommand={handleRunCommand}
+      />
       <SettingsDialog />
       <ShortcutsDialog />
     </div>

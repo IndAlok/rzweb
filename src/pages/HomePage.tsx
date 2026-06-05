@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useFileStore, useSettingsStore } from '@/stores';
@@ -6,8 +6,8 @@ import { Button } from '@/components/ui';
 import { FileDropZone } from '@/components/file';
 import { formatSize } from '@/lib/utils/format';
 import { getRizinVersion } from '@/lib/utils/version';
-import { getCachedAnalysisEntry, listCachedAnalyses, type CachedAnalysisSummary } from '@/lib/rizin';
-import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2 } from 'lucide-react';
+import { getCachedAnalysisEntry, listCachedAnalyses, decodeProjectBundle, type CachedAnalysisSummary } from '@/lib/rizin';
+import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2, FolderOpen } from 'lucide-react';
 import { useTheme } from '@/providers';
 
 export default function HomePage() {
@@ -21,6 +21,7 @@ export default function HomePage() {
   const [openingCachedHash, setOpeningCachedHash] = useState<string | null>(null);
   const [rizinVersion, setRizinVersion] = useState('...');
   const [cachedEntries, setCachedEntries] = useState<CachedAnalysisSummary[]>([]);
+  const projectInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getRizinVersion().then(setRizinVersion);
@@ -36,6 +37,7 @@ export default function HomePage() {
     data: Uint8Array;
     size: number;
     useCache: boolean;
+    projectData?: Uint8Array;
   }) => {
     setCurrentFile({
       id: crypto.randomUUID(),
@@ -43,9 +45,38 @@ export default function HomePage() {
       data: params.data,
       size: params.size,
       loadedAt: Date.now(),
+      projectData: params.projectData,
     });
     navigate(`/analyze?cache=${params.useCache}`);
   }, [navigate, setCurrentFile]);
+
+  const handleOpenProjectClick = useCallback(() => {
+    projectInputRef.current?.click();
+  }, []);
+
+  const handleProjectFileSelected = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const projectFile = event.target.files?.[0];
+    event.target.value = '';
+    if (!projectFile) return;
+
+    try {
+      const bytes = new Uint8Array(await projectFile.arrayBuffer());
+      const bundle = decodeProjectBundle(bytes);
+      if (!bundle) {
+        toast.error('A raw Rizin project needs its binary: open the binary first, then load the project from the workspace.');
+        return;
+      }
+      launchBinary({
+        name: bundle.name,
+        data: bundle.binary,
+        size: bundle.binary.byteLength,
+        useCache: cacheVersions,
+        projectData: bundle.rzdb,
+      });
+    } catch {
+      toast.error('Unable to open the selected project file.');
+    }
+  }, [cacheVersions, launchBinary]);
 
   const handleOpenRizin = useCallback(async () => {
     if (!file) return;
@@ -77,7 +108,7 @@ export default function HomePage() {
       }
 
       if (!(cached.binaryData instanceof Uint8Array) || cached.binaryData.byteLength === 0) {
-        toast.error('This older cache entry only has parsed metadata. Analyze the binary one more time to make it directly reopenable from Home.');
+        toast.error('This cache entry stores metadata only. Re-analyze the binary to reopen it directly from Home.');
         return;
       }
 
@@ -120,16 +151,21 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <main className="flex flex-1 items-center justify-center p-3 sm:p-6">
         <div className="w-full max-w-2xl">
           <div className="mb-6 text-center sm:mb-8">
-            <pre className="inline-block text-[8px] leading-tight text-primary sm:text-xs font-mono">
-{`  ____       __        __   _
- |  _ \\ ____\\ \\      / /__| |__
- | |_) |_  / \\ \\ /\\ / / _ \\ '_ \\
- |  _ < / /   \\ V  V /  __/ |_) |
- |_| \\_\\___|   \\_/\\_/ \\___|_.__/ `}
-            </pre>
+            <div className="overflow-x-auto">
+              <pre
+                aria-label="RzWeb"
+                className="inline-block min-w-max text-[9px] leading-none text-primary sm:text-sm font-mono"
+              >
+{` ____         __        __         _     
+|  _ \\   ____ \\ \\      / /   ___  | |__  
+| |_) | |_  /  \\ \\ /\\ / /   / _ \\ | '_ \\ 
+|  _ <   / /    \\ V  V /   |  __/ | |_) |
+|_| \\_\\ /___|    \\_/\\_/     \\___| |_.__/`}
+              </pre>
+            </div>
             <p className="mt-4 text-sm font-mono text-foreground/80">
               Browser-Based Reverse Engineering
             </p>
@@ -146,7 +182,7 @@ export default function HomePage() {
               onClear={() => setFile(null)}
             />
 
-            <div className="mt-4 flex items-center justify-between">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
               <label className="flex cursor-pointer items-center gap-2 text-xs font-mono text-muted-foreground">
                 <input
                   type="checkbox"
@@ -156,26 +192,39 @@ export default function HomePage() {
                 />
                 Cache offline
               </label>
-              <Button
-                onClick={handleOpenRizin}
-                disabled={!file || isProcessing}
-                loading={isProcessing}
-              >
-                Analyze
-              </Button>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={projectInputRef}
+                  type="file"
+                  accept=".rzdb,application/octet-stream"
+                  className="hidden"
+                  onChange={handleProjectFileSelected}
+                />
+                <Button variant="outline" onClick={handleOpenProjectClick} title="Open a saved RzWeb project (.rzdb)">
+                  <FolderOpen className="mr-1.5 h-4 w-4" />
+                  Open Project
+                </Button>
+                <Button
+                  onClick={handleOpenRizin}
+                  disabled={!file || isProcessing}
+                  loading={isProcessing}
+                >
+                  Analyze
+                </Button>
+              </div>
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2 sm:mt-6 sm:gap-4">
-            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:mt-6 sm:grid-cols-3 sm:gap-4">
+            <div className="flex items-center justify-center gap-2 rounded border border-border/50 bg-card/40 px-3 py-2 text-xs font-mono text-muted-foreground sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
               <Cpu className="h-4 w-4 text-primary" />
               <span>WASM Powered</span>
             </div>
-            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 rounded border border-border/50 bg-card/40 px-3 py-2 text-xs font-mono text-muted-foreground sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
               <Lock className="h-4 w-4 text-primary" />
               <span>100% Private</span>
             </div>
-            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 rounded border border-border/50 bg-card/40 px-3 py-2 text-xs font-mono text-muted-foreground sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
               <Code2 className="h-4 w-4 text-primary" />
               <span>Full CLI Access</span>
             </div>

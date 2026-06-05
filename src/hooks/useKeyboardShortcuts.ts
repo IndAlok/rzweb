@@ -1,53 +1,72 @@
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useUIStore } from '@/stores';
+import { VIEW_SHORTCUTS } from '@/lib/shortcuts';
+
+const CAPTURE = {
+  enableOnFormTags: true,
+  preventDefault: true,
+  eventListenerOptions: { capture: true },
+};
 
 export function useKeyboardShortcuts() {
-  const {
-    setCommandPaletteOpen,
-    setSearchDialogOpen,
-    toggleSidebar,
-    setSettingsDialogOpen,
-    setShortcutsDialogOpen,
-  } = useUIStore();
+  useHotkeys(
+    'mod+k',
+    (e) => {
+      e.stopPropagation();
+      const ui = useUIStore.getState();
+      ui.setCommandPaletteOpen(!ui.commandPaletteOpen);
+    },
+    CAPTURE
+  );
 
-  useHotkeys('mod+k', (e) => {
-    e.preventDefault();
-    setCommandPaletteOpen(true);
-  });
+  useHotkeys(
+    'mod+b',
+    (e) => {
+      e.stopPropagation();
+      useUIStore.getState().toggleSidebar();
+    },
+    CAPTURE
+  );
 
-  useHotkeys('mod+f', (e) => {
-    e.preventDefault();
-    setSearchDialogOpen(true);
-  });
+  useHotkeys(
+    'mod+comma',
+    (e) => {
+      e.stopPropagation();
+      useUIStore.getState().setSettingsDialogOpen(true);
+    },
+    CAPTURE
+  );
 
-  useHotkeys('mod+b', (e) => {
-    e.preventDefault();
-    toggleSidebar();
-  });
+  useHotkeys(
+    'mod+slash',
+    (e) => {
+      e.stopPropagation();
+      useUIStore.getState().setShortcutsDialogOpen(true);
+    },
+    CAPTURE
+  );
 
-  useHotkeys('mod+,', (e) => {
-    e.preventDefault();
-    setSettingsDialogOpen(true);
-  });
+  useHotkeys(
+    'alt+1,alt+2,alt+3,alt+4,alt+5,alt+6,alt+7,alt+8,alt+9',
+    (e, handler) => {
+      e.stopPropagation();
+      const digit = handler.keys?.[0];
+      const target = digit ? VIEW_SHORTCUTS[Number(digit) - 1] : undefined;
+      if (target) {
+        useUIStore.getState().setCurrentView(target.view);
+      }
+    },
+    CAPTURE
+  );
 
-  useHotkeys('mod+/', (e) => {
-    e.preventDefault();
-    setShortcutsDialogOpen(true);
-  });
-
-  useHotkeys('escape', () => {
-    setCommandPaletteOpen(false);
-    setSearchDialogOpen(false);
-    setSettingsDialogOpen(false);
-    setShortcutsDialogOpen(false);
-  });
+  useHotkeys(
+    'escape',
+    () => {
+      const ui = useUIStore.getState();
+      if (ui.commandPaletteOpen) ui.setCommandPaletteOpen(false);
+      if (ui.settingsDialogOpen) ui.setSettingsDialogOpen(false);
+      if (ui.shortcutsDialogOpen) ui.setShortcutsDialogOpen(false);
+    },
+    { enableOnFormTags: true }
+  );
 }
-
-export const shortcuts = [
-  { keys: ['Ctrl', 'K'], description: 'Open command palette' },
-  { keys: ['Ctrl', 'F'], description: 'Search' },
-  { keys: ['Ctrl', 'B'], description: 'Toggle sidebar' },
-  { keys: ['Ctrl', ','], description: 'Settings' },
-  { keys: ['Ctrl', '/'], description: 'Keyboard shortcuts' },
-  { keys: ['Escape'], description: 'Close dialogs' },
-];

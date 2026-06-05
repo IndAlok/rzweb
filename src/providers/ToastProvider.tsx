@@ -1,6 +1,6 @@
 import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
-import { useTheme } from './ThemeProvider';
+import { useTheme } from './theme-context';
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const { resolvedTheme } = useTheme();
