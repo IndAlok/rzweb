@@ -1,5 +1,11 @@
 # RzWeb
 
+<p align="center">
+  <a href="https://telegram.dog/rizinweb">
+    <img src="https://img.shields.io/badge/Telegram-Join%20the%20community-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Support & Discussion">
+  </a>
+</p>
+
 RzWeb is a browser-based reverse engineering interface powered by Rizin compiled to WebAssembly. Drop a binary into the app and analyze it locally in your browser with a persistent session, terminal access, cached re-open support, and dedicated views for disassembly, decompilation, cross-references, control-flow graphs, and the rest of the main analysis surfaces. Rizin runs in a Web Worker, so heavy analysis never blocks the UI.
 
 ## Screenshots
@@ -108,6 +114,14 @@ npm run dev
 ## Architecture
 
 The frontend uses React, TypeScript, Tailwind CSS, Zustand, xterm.js, and Cytoscape for graph rendering. The Rizin WebAssembly module runs inside a Web Worker that owns all native calls, filesystem access, JSON parsing, and IndexedDB persistence, the main thread talks to it through a typed RPC facade, so the UI never blocks on analysis. The reverse engineering core comes from the companion [rzwasi](https://github.com/IndAlok/rzwasi) repository, which builds Rizin to WebAssembly and exposes both the traditional CLI entrypoint and the persistent `rzweb_*` session API used by RzWeb.
+
+## Community & Support
+
+Questions, ideas, or need a hand? Join the chat:
+
+<a href="https://telegram.dog/rizinweb">
+  <img src="https://img.shields.io/badge/Telegram-%40rizinweb-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Support & Discussion">
+</a>
 
 ## Credits
 
