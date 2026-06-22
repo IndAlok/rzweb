@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ThemeId } from '@/lib/themes';
 
-export type Theme = 'light' | 'dark' | 'system';
+export type Theme = ThemeId | 'system';
 
 interface SettingsState {
   theme: Theme;
@@ -35,7 +36,7 @@ interface SettingsState {
 }
 
 const defaultSettings = {
-  theme: 'dark' as Theme,
+  theme: 'rizin-dark' as Theme,
   terminalFontSize: 14,
   terminalScrollback: 10000,
   terminalCursorBlink: true,
@@ -81,6 +82,15 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'rzweb-settings',
+      version: 1,
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<SettingsState>;
+        if (version < 1) {
+          if ((state.theme as string) === 'light') state.theme = 'rizin-light';
+          else if ((state.theme as string) === 'dark') state.theme = 'rizin-dark';
+        }
+        return state as SettingsState;
+      },
     }
   )
 );

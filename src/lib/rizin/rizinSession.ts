@@ -82,6 +82,9 @@ interface NativeSessionApi {
   getLastError: (sessionId: number) => string;
   autocomplete?: (sessionId: number, input: string, cursorPos: number, maxResults: number) => string;
   getCommandCatalog?: (sessionId: number) => string;
+  setWriteMode?: (sessionId: number, enable: number) => number;
+  commitChanges?: (sessionId: number) => number;
+  getFileSize?: (sessionId: number) => number;
 }
 
 interface CommandTokenBounds {
@@ -95,8 +98,8 @@ const LARGE_BINARY_ALERT_BYTES = 1024 * 1024;
 const PERSIST_THROTTLE_MS = 1500;
 const ESC = String.fromCharCode(27);
 // CSI sequences (colours, cursor moves, line clears). SGR colour codes end in
-// 'm' and are preserved so terminal output keeps Rizin's syntax highlighting;
-// every other CSI sequence (cursor positioning, clears) is dropped.
+// 'm' and are kept so terminal output retains Rizin's syntax highlighting.
+// Every other CSI sequence (cursor positioning, clears) is dropped.
 const CSI_RE = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
 // OSC sequences (e.g. window title) terminated by BEL or String Terminator.
 const OSC_RE = new RegExp(`${ESC}\\][^\\u0007]*(?:\\u0007|${ESC}\\\\)`, 'g');
@@ -106,6 +109,9 @@ const LONE_ESC_RE = new RegExp(`${ESC}(?!\\[)`, 'g');
 const NON_PRINTABLE_RE = new RegExp(`[^\\n\\r\\t${ESC} -~]`, 'g');
 // Removes all ANSI styling, used where output must be plain (e.g. decompiler).
 const ANSI_STRIP_RE = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
+
+// Matches Rizin's command-parser debug lines so we can drop them from stderr.
+const PARSER_DEBUG_RE = /^\s*DEBUG:\s/;
 
 const CACHE_BLOCKING_NOTICE_CODES = new Set([
   'output-truncated',
@@ -294,6 +300,10 @@ export class RizinSession {
   private nativeApi: NativeSessionApi | null = null;
   private nativeSessionId: number | null = null;
   private nativeApiChecked = false;
+  private writeMode = false;
+  private dirty = false;
+  // Mutable copy of the raw file backing the hex editor (physical offsets).
+  private fileImage: Uint8Array | null = null;
   private commandCatalogCache: Record<string, RizinCommandHelpEntry> | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistDirty = false;
@@ -350,7 +360,13 @@ export class RizinSession {
     this.module._printErrHandler = (text: string) => {
       const cleaned = this.cleanText(text);
       if (!cleaned) return;
-      this.stderrBuffer.push(cleaned);
+      // Drop the parser debug spew so it neither floods the terminal nor reads as an error.
+      const filtered = cleaned
+        .split('\n')
+        .filter(line => !PARSER_DEBUG_RE.test(line))
+        .join('\n');
+      if (!filtered.trim()) return;
+      this.stderrBuffer.push(filtered);
     };
   }
 
@@ -384,6 +400,9 @@ export class RizinSession {
     try {
       const hasAutocomplete = typeof exported._rzweb_autocomplete === 'function';
       const hasCommandCatalog = typeof exported._rzweb_get_command_catalog === 'function';
+      const hasSetWriteMode = typeof exported._rzweb_set_write_mode === 'function';
+      const hasCommitChanges = typeof exported._rzweb_commit_changes === 'function';
+      const hasGetFileSize = typeof exported._rzweb_get_file_size === 'function';
       return {
         createSession: this.module.cwrap('rzweb_create_session', 'number', []) as () => number,
         closeSession: this.module.cwrap('rzweb_close_session', 'number', ['number']) as (sessionId: number) => number,
@@ -421,6 +440,22 @@ export class RizinSession {
           ? this.module.cwrap('rzweb_get_command_catalog', 'string', ['number']) as (
               sessionId: number
             ) => string
+          : undefined,
+        setWriteMode: hasSetWriteMode
+          ? this.module.cwrap('rzweb_set_write_mode', 'number', ['number', 'number']) as (
+              sessionId: number,
+              enable: number
+            ) => number
+          : undefined,
+        commitChanges: hasCommitChanges
+          ? this.module.cwrap('rzweb_commit_changes', 'number', ['number']) as (
+              sessionId: number
+            ) => number
+          : undefined,
+        getFileSize: hasGetFileSize
+          ? this.module.cwrap('rzweb_get_file_size', 'number', ['number']) as (
+              sessionId: number
+            ) => number
           : undefined,
       };
     } catch {
@@ -600,6 +635,7 @@ export class RizinSession {
     }
 
     this.applyDisplayDefaults();
+    this.writeMode = writeMode;
 
     return true;
   }
@@ -607,7 +643,7 @@ export class RizinSession {
   // Display/runtime settings applied after any core (re)initialization. The C
   // session resets these to defaults on every open/load, so re-apply them here.
   // scr.color=3 enables truecolor SGR output so the terminal shows Rizin's
-  // native syntax highlighting; scr.utf8 stays off to keep output ASCII-safe.
+  // native syntax highlighting. scr.utf8 stays off to keep output ASCII-safe.
   private applyDisplayDefaults(): void {
     this.runNativeCommand(
       'e scr.color=3;e scr.color.args=true;e scr.color.bytes=true;e scr.interactive=false;e scr.prompt=false;e scr.utf8=false;e scr.utf8.curvy=false;e log.level=0;e scr.pager=',
@@ -628,7 +664,7 @@ export class RizinSession {
 
     const loaded = this.nativeApi.loadProject(this.nativeSessionId, this.projectPath, 1);
     if (loaded) {
-      // loadProject resets the core, clearing our display settings — re-apply them.
+      // loadProject resets the core and clears our display settings, re-apply them.
       this.applyDisplayDefaults();
     }
     return !!loaded;
@@ -656,8 +692,8 @@ export class RizinSession {
     if (!data || data.byteLength === 0) {
       throw new Error(this.getNativeLastError() || 'Rizin did not produce project data for this binary.');
     }
-    // Wrap the rzdb together with the binary so the saved file reopens cold with
-    // a single click — a bare rzdb only stores the binary's path, not its bytes.
+    // Wrap the rzdb together with the binary so the saved file reopens cold. A
+    // bare rzdb only stores the binary's path, not its bytes.
     return encodeProjectBundle(this.file.name, this.file.data, data);
   }
 
@@ -677,7 +713,7 @@ export class RizinSession {
     // Raw Rizin .rzdb: it references the binary by path, so the matching binary
     // must already be open for the project to resolve.
     if (!this._isOpen || !this.file) {
-      throw new Error('Open the matching binary first, then load this raw Rizin project — or load a project saved from RzWeb.');
+      throw new Error('Open the matching binary first, then load this raw Rizin project, or load a project saved from RzWeb.');
     }
 
     if (!this.restoreNativeProject(projectData)) {
@@ -703,6 +739,184 @@ export class RizinSession {
       await this.persistCurrentAnalysis();
     }
     this.emitAnalysisChanged();
+  }
+
+  // Reopen the file read-write or read-only without losing analysis.
+  setWriteMode(enable: boolean): boolean {
+    if (!this._isOpen || !this.file) {
+      throw new Error('Open a binary before toggling write mode.');
+    }
+    if (!this.hasNativeSession() || !this.nativeApi || this.nativeSessionId == null) {
+      throw new Error('Write mode needs the native session API, which is unavailable in this build.');
+    }
+
+    if (this.nativeApi.setWriteMode) {
+      this.nativeApi.setWriteMode(this.nativeSessionId, enable ? 1 : 0);
+    } else {
+      // oo+ is read-write, oo is read-only.
+      this.runNativeCommand(enable ? 'oo+' : 'oo', {
+        context: 'metadata',
+        commandLabel: 'Toggle write mode',
+        suppressNotice: true,
+      });
+    }
+
+    // Reopening resets the core display settings, so restore them.
+    this.applyDisplayDefaults();
+    this.writeMode = enable;
+    this.refreshCurrentAddress();
+    return this.writeMode;
+  }
+
+  // --- Raw file access (hex editor) -----------------------------------------
+  // The hex view works on the raw file image at physical offsets, so search and
+  // edits are like HxD (hehe) (every byte, mapped or not).
+
+  readFileSlice(offset: number, length: number): Uint8Array {
+    if (!this.fileImage || offset < 0 || offset >= this.fileImage.length) {
+      return new Uint8Array(0);
+    }
+    return this.fileImage.slice(offset, Math.min(offset + length, this.fileImage.length));
+  }
+
+  // Exact byte search over the whole raw file. caseInsensitive folds ASCII A-Z.
+  searchFileBytes(needle: Uint8Array, caseInsensitive: boolean): number[] {
+    const hay = this.fileImage;
+    const n = needle.length;
+    if (!hay || n === 0 || n > hay.length) return [];
+    const fold = caseInsensitive
+      ? (b: number) => (b >= 65 && b <= 90 ? b + 32 : b)
+      : (b: number) => b;
+    const first = fold(needle[0]);
+    const matches: number[] = [];
+    const limit = hay.length - n;
+    for (let i = 0; i <= limit; i++) {
+      if (fold(hay[i]) !== first) continue;
+      let ok = true;
+      for (let j = 1; j < n; j++) {
+        if (fold(hay[i + j]) !== fold(needle[j])) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        matches.push(i);
+        if (matches.length >= 100000) break;
+      }
+    }
+    return matches;
+  }
+
+  patchFile(offset: number, hex: string): { ok: boolean; error?: string } {
+    const clean = hex.replace(/[^0-9a-fA-F]/g, '');
+    if (clean.length === 0 || clean.length % 2 !== 0) {
+      return { ok: false, error: 'Enter an even number of hex digits.' };
+    }
+    if (!this.fileImage) return { ok: false, error: 'No binary is open.' };
+    const bytes = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    }
+    if (offset < 0 || offset + bytes.length > this.fileImage.length) {
+      return { ok: false, error: 'Patch is out of range.' };
+    }
+    this.fileImage.set(bytes, offset);
+    this.dirty = true;
+    return { ok: true };
+  }
+
+  // Returns the edited raw file. Merges in any terminal write-cache edits.
+  async exportBinary(): Promise<{ data: Uint8Array; name: string }> {
+    if (!this.file || !this.fileImage) {
+      throw new Error('Open a binary before exporting it.');
+    }
+    const merged = new Uint8Array(this.fileImage);
+    if (this.hasNativeSession() && this.nativeApi && this.nativeSessionId != null) {
+      if (this.nativeApi.commitChanges) this.nativeApi.commitChanges(this.nativeSessionId);
+      else this.runNativeCommand('wci', { context: 'metadata', commandLabel: 'Commit changes', suppressNotice: true });
+      const rizinBytes = this.filePath ? readFsBytes(this.module, this.filePath) : null;
+      const orig = this.file.data;
+      if (rizinBytes && rizinBytes.length === orig.length) {
+        // Apply terminal/rizin edits where the hex editor did not change a byte.
+        for (let i = 0; i < merged.length; i++) {
+          if (rizinBytes[i] !== orig[i] && merged[i] === orig[i]) merged[i] = rizinBytes[i];
+        }
+      }
+    }
+    this.dirty = false;
+    return { data: merged, name: this.file.name };
+  }
+
+  // --- Scripting ------------------------------------------------------------
+
+  // Synchronous command API exposed to JavaScript scripts
+  private buildScriptApi(logs: string[]) {
+    const runCmd = (command: unknown): string => {
+      const result = this.runNativeCommand(String(command ?? ''), {
+        context: 'command',
+        commandLabel: 'Script',
+        suppressNotice: true,
+      });
+      return this.stripAnsi(result.output);
+    };
+    const runCmdJson = (command: unknown): unknown => {
+      const out = runCmd(command).trim();
+      return out ? JSON.parse(out) : null;
+    };
+    const push = (args: unknown[]) =>
+      logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    return {
+      cmd: runCmd,
+      call: runCmd,
+      cmdj: runCmdJson,
+      callj: runCmdJson,
+      cmdAt: (command: unknown, at: unknown) => runCmd(`${command} @ ${at}`),
+      log: (...args: unknown[]) => push(args),
+    };
+  }
+
+  runScript(source: string, language: 'rz' | 'js'): { output: string; error?: string } {
+    if (!this._isOpen || !this.file) {
+      return { output: '', error: 'Open a binary before running a script.' };
+    }
+    if (!this.hasNativeSession()) {
+      return { output: '', error: 'Scripting needs the native session API.' };
+    }
+
+    if (language === 'rz') {
+      const path = `${this.workDir}/.rzweb-script.rz`;
+      try {
+        this.module.FS.writeFile(path, source);
+      } catch {
+        return { output: '', error: 'Could not stage the script.' };
+      }
+      const result = this.runNativeCommand(`. ${path}`, {
+        context: 'command',
+        commandLabel: 'Run script',
+        suppressNotice: true,
+      });
+      try {
+        this.module.FS.unlink(path);
+      } catch {
+        // Already gone, ignore.
+      }
+      const stderr = this.stderrBuffer.join('\n').trim();
+      return { output: this.stripAnsi(result.output), error: stderr || undefined };
+    }
+
+    const logs: string[] = [];
+    const api = this.buildScriptApi(logs);
+    const consoleShim = { log: api.log, info: api.log, warn: api.log, error: api.log };
+    try {
+      const fn = new Function('rz', 'console', `"use strict";\n${source}`);
+      const returned = fn(api, consoleShim);
+      if (returned !== undefined) {
+        logs.push(typeof returned === 'string' ? returned : JSON.stringify(returned, null, 2));
+      }
+      return { output: logs.join('\n') };
+    } catch (error) {
+      return { output: logs.join('\n'), error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   get isOpen(): boolean {
@@ -791,6 +1005,8 @@ export class RizinSession {
       notices: [...this.notices],
       lastStderr: this.lastCommandStderr,
       fileName: this.file?.name ?? null,
+      writeMode: this.writeMode,
+      isDirty: this.dirty,
     };
   }
 
@@ -1045,7 +1261,8 @@ export class RizinSession {
     try {
       this.module.callMain(args);
     } catch {
-      // Rizin/Emscripten may throw after command completion; the captured buffers are the source of truth.
+      // Rizin/Emscripten may throw after a command completes. The captured
+      // buffers are the source of truth.
     } finally {
       const capture = this.activeOutputCapture;
       this.activeOutputCapture = null;
@@ -1727,6 +1944,9 @@ export class RizinSession {
     this.currentAddress = '0x00000000';
     this.notices = [];
     this.commandCatalogCache = null;
+    this.writeMode = false;
+    this.dirty = false;
+    this.fileImage = new Uint8Array(file.data);
     this.runtimeConfig = {
       ioCache: config?.ioCache ?? true,
       analysisDepth: config?.analysisDepth ?? 2,
@@ -1763,7 +1983,7 @@ export class RizinSession {
     }
 
     // An explicit project payload (cold-loading a saved RzWeb project) takes
-    // precedence over any cached analysis; otherwise fall back to cached project
+    // precedence over any cached analysis. Otherwise fall back to cached project
     // data so reopening a previously-analyzed binary restores instantly.
     const explicitRestore = !!restoreProjectData && restoreProjectData.byteLength > 0;
     const projectToRestore = explicitRestore ? restoreProjectData : cached?.projectData;
@@ -1802,7 +2022,8 @@ export class RizinSession {
       return;
     }
 
-    const nativeSessionReady = this.startNativeFileSession();
+    // Open r/w so hex and terminal edits persist and can be exported.
+    const nativeSessionReady = this.startNativeFileSession(true);
     this.refreshCurrentAddress();
 
     if (file.data.length >= LARGE_BINARY_ALERT_BYTES) {
@@ -1902,11 +2123,15 @@ export class RizinSession {
           commandLabel: 'Command output',
         });
 
-        // Capture stderr now — before the background refresh below runs more
-        // commands — so the terminal surfaces only the user command's own errors.
+        // Capture stderr now, before the background refresh below runs more
+        // commands, so the terminal surfaces only the user command's own errors.
         this.lastCommandStderr = this.stderrBuffer.join('\n');
 
         this.updateCurrentAddressFromCommand(finalCmd);
+        // Terminal write commands also dirty the binary.
+        if (this.writeMode && /(^|;)\s*w/i.test(originalCmd)) {
+          this.dirty = true;
+        }
         item.resolve(result.output);
 
         const refreshPlan = this.buildRefreshPlan(originalCmd);
@@ -1954,7 +2179,7 @@ export class RizinSession {
     return this.currentAddress;
   }
 
-  // Reads `size` bytes at `address` via a temporary `@` seek; short reads at an
+  // Reads `size` bytes at `address` via a temporary `@` seek. Short reads at an
   // unmapped tail return fewer bytes, which callers pad with placeholders.
   readMemory(address: number, size: number): Uint8Array {
     const safeSize = Math.max(0, Math.min(Math.floor(size), 1 << 20));
@@ -2028,9 +2253,9 @@ export class RizinSession {
   }
 
   // Renders the function at `address`. Uses a real decompiler plugin (pdg from
-  // rz-ghidra, pdd from jsdec, or pdc) when the build ships one; otherwise falls
-  // back to Rizin's pseudo-disassembly so the view is never empty. The `pseudo`
-  // flag lets the UI label fallback output honestly.
+  // rz-ghidra, pdd from jsdec, or pdc) when the build ships one, else falls back
+  // to Rizin's pseudo-disassembly so the view is never empty. The `pseudo` flag
+  // lets the UI label fallback output.
   getDecompilation(address: number): { code: string; pseudo: boolean } {
     if (!this._isOpen) return { code: '', pseudo: false };
     const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
@@ -2097,6 +2322,9 @@ export class RizinSession {
       }
 
       this._isOpen = false;
+      this.writeMode = false;
+      this.dirty = false;
+      this.fileImage = null;
       this.stdoutBuffer = [];
       this.stderrBuffer = [];
       this.lastCommandStderr = '';

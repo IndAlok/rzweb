@@ -9,3 +9,5 @@ export { SectionsView } from './SectionsView';
 export { HeaderInfoPanel } from './HeaderInfoPanel';
 export { XrefsView } from './XrefsView';
 export { DecompilerView } from './DecompilerView';
+export { FlagsView } from './FlagsView';
+export { CallGraphView } from './CallGraphView';

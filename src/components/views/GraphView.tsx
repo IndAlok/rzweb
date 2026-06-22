@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo, useCallback } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { useTheme } from '@/providers';
-import { cn } from '@/lib/utils';
+import { cn, cssVarHex } from '@/lib/utils';
 import { Share2, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 import { Button } from '@/components/ui';
 
@@ -30,15 +30,23 @@ interface GraphViewProps {
   className?: string;
 }
 
-const palette = (dark: boolean) => ({
-  nodeBg: dark ? '#1e293b' : '#f8fafc',
-  nodeText: dark ? '#e2e8f0' : '#0f172a',
-  nodeBorder: dark ? '#475569' : '#cbd5e1',
-  edge: dark ? '#475569' : '#cbd5e1',
-});
+// Reads graph colors from active theme tokens so CFG matches every theme.
+function readPalette() {
+  return {
+    nodeBg: cssVarHex('--card'),
+    nodeText: cssVarHex('--foreground'),
+    nodeBorder: cssVarHex('--border'),
+    edge: cssVarHex('--muted-foreground'),
+    entry: cssVarHex('--success'),
+    exit: cssVarHex('--warning'),
+    current: cssVarHex('--primary'),
+    fail: cssVarHex('--destructive'),
+    call: cssVarHex('--code-function'),
+  };
+}
 
-function buildStylesheet(dark: boolean): cytoscape.StylesheetStyle[] {
-  const c = palette(dark);
+function buildStylesheet(): cytoscape.StylesheetStyle[] {
+  const c = readPalette();
   return [
     {
       selector: 'node',
@@ -64,15 +72,15 @@ function buildStylesheet(dark: boolean): cytoscape.StylesheetStyle[] {
     },
     {
       selector: 'node[type="entry"]',
-      style: { 'border-color': '#22c55e', 'border-width': 3 },
+      style: { 'border-color': c.entry, 'border-width': 3 },
     },
     {
       selector: 'node[type="exit"]',
-      style: { 'border-color': '#f59e0b' },
+      style: { 'border-color': c.exit },
     },
     {
       selector: 'node.current',
-      style: { 'border-color': '#38bdf8', 'border-width': 4 },
+      style: { 'border-color': c.current, 'border-width': 4 },
     },
     {
       selector: 'edge',
@@ -84,11 +92,11 @@ function buildStylesheet(dark: boolean): cytoscape.StylesheetStyle[] {
         'curve-style': 'bezier',
       },
     },
-    { selector: 'edge[type="jump"]', style: { 'line-color': '#22c55e', 'target-arrow-color': '#22c55e' } },
-    { selector: 'edge[type="fail"]', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444' } },
+    { selector: 'edge[type="jump"]', style: { 'line-color': c.entry, 'target-arrow-color': c.entry } },
+    { selector: 'edge[type="fail"]', style: { 'line-color': c.fail, 'target-arrow-color': c.fail } },
     {
       selector: 'edge[type="call"]',
-      style: { 'line-color': '#3b82f6', 'target-arrow-color': '#3b82f6', 'line-style': 'dashed' },
+      style: { 'line-color': c.call, 'target-arrow-color': c.call, 'line-style': 'dashed' },
     },
   ];
 }
@@ -98,10 +106,7 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
   const cyRef = useRef<cytoscape.Core | null>(null);
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
-  const { resolvedTheme } = useTheme();
-  const dark = resolvedTheme === 'dark';
-  const darkRef = useRef(dark);
-  darkRef.current = dark;
+  const { resolvedThemeId } = useTheme();
 
   const elements = useMemo<cytoscape.ElementDefinition[]>(() => {
     if (!nodes.length) return [];
@@ -132,7 +137,7 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      style: buildStylesheet(darkRef.current),
+      style: buildStylesheet(),
       layout: { name: 'dagre', rankDir: 'TB', nodeSep: 40, rankSep: 80 } as cytoscape.LayoutOptions,
     });
 
@@ -149,8 +154,8 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
   }, [elements]);
 
   useEffect(() => {
-    cyRef.current?.style(buildStylesheet(dark));
-  }, [dark]);
+    cyRef.current?.style(buildStylesheet());
+  }, [resolvedThemeId]);
 
   useEffect(() => {
     const cy = cyRef.current;

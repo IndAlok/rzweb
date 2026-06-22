@@ -5,23 +5,31 @@ import { cn } from '@/lib/utils';
 import { formatAddressShort, formatSize } from '@/lib/utils/format';
 import type { RzFunction } from '@/types/rizin';
 import { Input, Badge } from '@/components/ui';
-import { Search, Hash, Box, ChevronUp, ChevronDown } from 'lucide-react';
+import { Search, Hash, Box, ChevronUp, ChevronDown, Pencil, Binary } from 'lucide-react';
 
 interface FunctionsViewProps {
   functions: RzFunction[];
   onSelect?: (fcn: RzFunction) => void;
+  onRename?: (offset: number, name: string) => void;
+  onShowInHex?: (offset: number) => void;
   className?: string;
 }
 
 const ROW_HEIGHT = 52;
 const OVERSCAN = 5;
 
-export function FunctionsView({ functions, onSelect, className }: FunctionsViewProps) {
+export function FunctionsView({ functions, onSelect, onRename, onShowInHex, className }: FunctionsViewProps) {
   const [filter, setFilter] = useState('');
   const { selectedFunction } = useUIStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(400);
+  const [renaming, setRenaming] = useState<{ offset: number; value: string } | null>(null);
+
+  const submitRename = useCallback(() => {
+    if (renaming) onRename?.(renaming.offset, renaming.value);
+    setRenaming(null);
+  }, [renaming, onRename]);
 
   const validFunctions = useMemo(() => {
     return functions.filter(f => f && typeof f.name === 'string');
@@ -126,8 +134,10 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
       >
         <div style={{ height: totalHeight, position: 'relative' }}>
           {visibleRows.map(({ index, data: fcn }) => (
-            <button
+            <div
               key={`${fcn.offset ?? index}-${index}`}
+              role="button"
+              tabIndex={0}
               onClick={() => handleFunctionClick(fcn)}
               style={{
                 position: 'absolute',
@@ -137,15 +147,50 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
                 height: ROW_HEIGHT,
               }}
               className={cn(
-                'w-full flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-colors text-left group mx-0.5',
+                'w-full flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-colors text-left group mx-0.5 cursor-pointer',
                 selectedFunction === fcn.name
                   ? 'bg-primary text-primary-foreground'
                   : 'hover:bg-accent hover:text-accent-foreground'
               )}
             >
               <div className="flex items-center justify-between w-full gap-2">
-                <span className="text-sm font-medium truncate flex-1">
-                  {fcn.name || '<unnamed>'}
+                {renaming?.offset === fcn.offset ? (
+                  <Input
+                    autoFocus
+                    value={renaming.value}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setRenaming({ offset: fcn.offset, value: e.target.value })}
+                    onBlur={submitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitRename();
+                      else if (e.key === 'Escape') setRenaming(null);
+                    }}
+                    className="h-5 flex-1 text-xs"
+                  />
+                ) : (
+                  <span className="text-sm font-medium truncate flex-1">
+                    {fcn.name || '<unnamed>'}
+                  </span>
+                )}
+                <span className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
+                  {onRename && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setRenaming({ offset: fcn.offset, value: fcn.name ?? '' }); }}
+                      className="rounded p-0.5 hover:bg-background/30"
+                      title="Rename"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
+                  {onShowInHex && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onShowInHex(fcn.offset); }}
+                      className="rounded p-0.5 hover:bg-background/30"
+                      title="Show in hex"
+                    >
+                      <Binary className="h-3 w-3" />
+                    </button>
+                  )}
                 </span>
                 <span className={cn(
                   "text-[10px] tabular-nums",
@@ -171,7 +216,7 @@ export function FunctionsView({ functions, onSelect, className }: FunctionsViewP
                   </span>
                 )}
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </div>

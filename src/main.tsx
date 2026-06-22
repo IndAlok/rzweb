@@ -37,7 +37,7 @@ if (!container) throw new Error('Root element not found');
 createRoot(container).render(
   <ErrorBoundary FallbackComponent={ErrorFallback}>
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="dark">
+      <ThemeProvider defaultTheme="rizin-dark">
         <TooltipProvider>
           <ToastProvider>
             <RouterProvider router={router} future={{ v7_startTransition: true }} />

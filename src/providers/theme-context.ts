@@ -1,9 +1,11 @@
 import { createContext, useContext } from 'react';
 import type { Theme } from '@/stores';
+import type { Appearance, ThemeId } from '@/lib/themes';
 
 export interface ThemeContextValue {
   theme: Theme;
-  resolvedTheme: 'light' | 'dark';
+  resolvedThemeId: ThemeId;
+  resolvedTheme: Appearance;
   setTheme: (theme: Theme) => void;
 }
 

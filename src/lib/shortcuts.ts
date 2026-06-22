@@ -30,6 +30,9 @@ export const VIEW_SHORTCUTS: readonly ViewShortcut[] = [
 export const EXTRA_VIEWS: readonly ViewShortcut[] = [
   { view: 'decompiler', label: 'Decompiler' },
   { view: 'xrefs', label: 'Xrefs' },
+  { view: 'scripts', label: 'Scripts' },
+  { view: 'flags', label: 'Flags' },
+  { view: 'callgraph', label: 'Call Graph' },
 ];
 
 export interface KeyShortcut {

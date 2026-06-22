@@ -139,7 +139,8 @@ export default function HomePage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            onClick={() => setTheme(resolvedTheme === 'dark' ? 'rizin-light' : 'rizin-dark')}
+            title="Toggle light / dark"
           >
             {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>

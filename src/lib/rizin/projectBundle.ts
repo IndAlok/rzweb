@@ -1,8 +1,7 @@
-// Self-contained RzWeb project bundle: a Rizin `.rzdb` does NOT embed the
-// binary's bytes — it only references the file's path — so a bare `.rzdb` can't
-// be reopened cold in the browser. We wrap the binary together with the rzdb so
-// loading a saved project is a single, fully cold action: no need to first open
-// the matching binary by hand.
+// Self-contained RzWeb project bundle. A Rizin `.rzdb` only references the
+// binary's path, not its bytes, so a bare `.rzdb` cannot be reopened cold in
+// the browser. We wrap the binary with the rzdb so loading a saved project is a
+// single cold action.
 //
 // Layout (all integers little-endian):
 //   magic    "RZWEBPRJ"  (8 bytes)
@@ -12,7 +11,7 @@
 //   rzdbLen  u32  + rzdb bytes
 //
 // decodeProjectBundle returns null for anything that isn't a bundle (e.g. a raw
-// Rizin `.rzdb`), so callers can transparently fall back to the legacy path.
+// Rizin `.rzdb`), so callers can fall back to the legacy path.
 
 const MAGIC = 'RZWEBPRJ';
 const MAGIC_LEN = 8;
