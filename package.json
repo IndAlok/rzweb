@@ -45,7 +45,7 @@
     "cmdk": "^1.1.1",
     "coi-serviceworker": "^0.1.7",
     "cytoscape": "^3.33.1",
-    "cytoscape-dagre": "^2.5.0",
+    "cytoscape-dagre": "^4.0.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.400.0",
     "react": "^18.3.1",
