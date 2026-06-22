@@ -24,7 +24,7 @@ const FLUSH_THRESHOLD = 65536;
 interface WorkerScope {
   Module?: unknown;
   postMessage: (message: unknown) => void;
-  addEventListener: (type: 'message', listener: (event: { data: RizinInbound }) => void) => void;
+  addEventListener: (type: 'message', listener: (event: { data: RizinInbound; origin: string }) => void) => void;
   importScripts?: (...urls: string[]) => void;
 }
 
@@ -216,7 +216,12 @@ async function handleRequest(request: RizinRequest): Promise<void> {
 }
 
 ctx.addEventListener('message', event => {
+  // A dedicated worker only receives messages from the same-origin page that
+  // spawned it (origin is the empty string for those). Reject anything that
+  // arrives with a foreign origin as defense in depth.
+  if (event.origin && event.origin !== self.location.origin) return;
   const message = event.data;
+  if (!message || typeof message !== 'object') return;
   if ('control' in message) {
     if (message.control === 'init') init();
     return;

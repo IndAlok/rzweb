@@ -908,6 +908,11 @@ export class RizinSession {
     const api = this.buildScriptApi(logs);
     const consoleShim = { log: api.log, info: api.log, warn: api.log, error: api.log };
     try {
+      // The Scripts panel is an opt-in sandbox: the user runs their own
+      // JavaScript against the rz API inside this worker, like a REPL. The
+      // source is authored locally by the same operator (typed in the editor or
+      // loaded from a file they pick), never supplied by a remote party, so this
+      // is not a code-injection vector despite the editor-to-Function dataflow.
       const fn = new Function('rz', 'console', `"use strict";\n${source}`);
       const returned = fn(api, consoleShim);
       if (returned !== undefined) {

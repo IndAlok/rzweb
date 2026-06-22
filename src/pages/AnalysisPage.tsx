@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense, type ChangeEvent } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, Group, Separator } from 'react-resizable-panels';
 
 import { useFileStore, useRizinStore, useUIStore, useSettingsStore, useTabStore, type ActivePanel } from '@/stores';
 import { loadRizinModule, getCachedVersions, RizinInstance, decodeProjectBundle, type RizinNotice } from '@/lib/rizin';
@@ -944,13 +944,14 @@ export default function AnalysisPage() {
       )}
 
       <div className="flex-1 overflow-hidden">
-        <PanelGroup direction={panelDirection}>
+        <Group orientation={panelDirection}>
           {sidebarOpen && (
             <>
               <Panel
-                defaultSize={stacked ? 34 : 20}
-                minSize={stacked ? 22 : 15}
-                maxSize={stacked ? 55 : 40}
+                id="sidebar"
+                defaultSize={stacked ? '34' : '20'}
+                minSize={stacked ? '22' : '15'}
+                maxSize={stacked ? '55' : '40'}
                 className="bg-card"
               >
                 <FunctionsView
@@ -961,7 +962,7 @@ export default function AnalysisPage() {
                   className={panelDirection === 'vertical' ? 'border-b border-r-0' : undefined}
                 />
               </Panel>
-              <PanelResizeHandle
+              <Separator
                 className={cn(
                   'bg-border/50 transition-colors hover:bg-primary/30',
                   panelDirection === 'vertical' ? 'h-1' : 'w-1'
@@ -969,8 +970,8 @@ export default function AnalysisPage() {
               />
             </>
           )}
-          
-          <Panel>
+
+          <Panel id="main">
             <div className="h-full relative bg-[#0f172a]">
               {currentView === 'terminal' && activeInstance && (
                 <RizinTerminal
@@ -1014,7 +1015,7 @@ export default function AnalysisPage() {
               {currentView === 'info' && <HeaderInfoPanel info={infoPayload} fileSize={currentFile?.size} />}
             </div>
           </Panel>
-        </PanelGroup>
+        </Group>
       </div>
 
       <footer className="shrink-0 border-t border-border bg-card px-2 py-1.5 text-[10px] text-muted-foreground sm:px-4">
