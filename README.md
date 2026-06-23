@@ -60,8 +60,12 @@ RzWeb is a browser-based reverse engineering interface powered by Rizin compiled
 
 ## Highlights
 
+- Multi-session tabs: open several binaries at once, each in its own Web Worker, and switch between them with per-tab view state preserved.
 - Persistent Rizin sessions through the paired `rzwasi` build, so analysis state, seeks, and follow-up commands stay live inside the same binary session.
 - Rizin runs in a Web Worker, keeping the UI responsive during analysis, multi-MB JSON parsing, and persistence.
+- Edit the binary in the browser like: patch bytes from the Hex view or terminal write commands and save the modified file at any time.
+- Scripts panel with a CodeMirror editor (syntax highlighting, command-catalog autocomplete) that runs rizin cmd scripts and JS with a synchronous `rz` API, scripts can be uploaded, saved, and downloaded.
+- Multiple themes with a picker, the terminal and control-flow graph track the active theme.
 - Full terminal access with live command autocomplete, `Tab` completion, arrow-key selection, in-terminal find, and configurable minimum characters and max results returned.
 - Dedicated views for disassembly, decompilation, cross-references, control-flow graphs, hex, strings, imports, exports, sections, and binary information.
 - Built-in decompiler view (auto-detects the build's decompiler command, e.g. `pdg`/`pdc`) with C-style syntax highlighting and one-click copy.

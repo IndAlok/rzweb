@@ -3,3 +3,5 @@ dist/
 *.local
 *.wasm
 .vercel
+public/rizin.js
+public/coi-serviceworker.min.js

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -8,9 +8,39 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
 import { useSettingsStore, useSessionStore } from '@/stores';
-import { cn } from '@/lib/utils';
+import { cn, cssVarHex } from '@/lib/utils';
+import { useTheme } from '@/providers';
 import { Search, ArrowUp, ArrowDown, X } from 'lucide-react';
 import type { RizinCommandHelpEntry, RizinInstance } from '@/lib/rizin';
+
+// Builds an xterm theme from the active CSS theme variables so the terminal
+// tracks whatever theme is selected.
+function readTerminalTheme(): ITheme {
+  const c = cssVarHex;
+  return {
+    background: c('--background'),
+    foreground: c('--foreground'),
+    cursor: c('--primary'),
+    cursorAccent: c('--background'),
+    selectionBackground: c('--accent'),
+    black: c('--muted'),
+    red: c('--destructive'),
+    green: c('--success'),
+    yellow: c('--warning'),
+    blue: c('--primary'),
+    magenta: c('--code-keyword'),
+    cyan: c('--code-instruction'),
+    white: c('--foreground'),
+    brightBlack: c('--muted-foreground'),
+    brightRed: c('--destructive'),
+    brightGreen: c('--code-string'),
+    brightYellow: c('--code-number'),
+    brightBlue: c('--code-function'),
+    brightMagenta: c('--code-register'),
+    brightCyan: c('--code-instruction'),
+    brightWhite: c('--foreground'),
+  };
+}
 
 export interface RizinTerminalRef {
   terminal: Terminal | null;
@@ -107,6 +137,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       terminalAutocompleteMaxResults,
     } = useSettingsStore();
     const { addToHistory, commandHistory } = useSessionStore();
+    const { resolvedThemeId } = useTheme();
 
     const [autocompleteState, setAutocompleteState] = useState<TerminalAutocompleteState>(EMPTY_AUTOCOMPLETE_STATE);
     const [searchOpen, setSearchOpen] = useState(false);
@@ -433,6 +464,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
       let setupFrame = 0;
       let fitFrame = 0;
       let term: Terminal | null = null;
+      let webglAddon: WebglAddon | null = null;
       let resizeObserver: ResizeObserver | null = null;
 
       const setup = () => {
@@ -453,29 +485,7 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
           scrollback: terminalScrollback,
           fontSize: terminalFontSize,
           fontFamily: 'JetBrains Mono, Fira Code, Consolas, monospace',
-          theme: {
-            background: '#0f172a',
-            foreground: '#e2e8f0',
-            cursor: '#38bdf8',
-            cursorAccent: '#0f172a',
-            selectionBackground: '#334155',
-            black: '#1e293b',
-            red: '#f87171',
-            green: '#4ade80',
-            yellow: '#facc15',
-            blue: '#60a5fa',
-            magenta: '#c084fc',
-            cyan: '#22d3ee',
-            white: '#f8fafc',
-            brightBlack: '#475569',
-            brightRed: '#fca5a5',
-            brightGreen: '#86efac',
-            brightYellow: '#fde047',
-            brightBlue: '#93c5fd',
-            brightMagenta: '#d8b4fe',
-            brightCyan: '#67e8f9',
-            brightWhite: '#ffffff',
-          },
+          theme: readTerminalTheme(), // Why would we hardcode here?
           allowProposedApi: true,
         });
 
@@ -506,11 +516,15 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
         });
 
         try {
-          const webglAddon = new WebglAddon();
-          webglAddon.onContextLoss(() => { webglAddon.dispose(); });
+          webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            try { webglAddon?.dispose(); } catch { /* already torn down */ }
+            webglAddon = null;
+          });
           term.loadAddon(webglAddon);
         } catch {
           // Ignore WebGL acceleration issues and keep the software renderer.
+          webglAddon = null;
         }
 
         fitAddon.fit();
@@ -550,8 +564,14 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
         cancelAnimationFrame(setupFrame);
         cancelAnimationFrame(fitFrame);
         resizeObserver?.disconnect();
+        // Addon teardown (the WebGL renderer especially) can throw depending on
+        // the GPU/driver and disposal order. A view switch unmounts this
+        // component, so an uncaught throw here would crash the whole app:
+        // dispose defensively and never let it propagate.
+        try { webglAddon?.dispose(); } catch { /* already torn down */ }
+        webglAddon = null;
         if (term) {
-          term.dispose();
+          try { term.dispose(); } catch { /* an addon raised during teardown; ignore */ }
         }
         terminalRef.current = null;
         fitAddonRef.current = null;
@@ -559,6 +579,13 @@ export const RizinTerminal = forwardRef<RizinTerminalRef, RizinTerminalProps>(
         setTerminalReady(false);
       };
     }, [onReady, terminalCursorBlink, terminalFontSize, terminalScrollback]);
+
+    // Repaint the terminal when the active theme changes.
+    useEffect(() => {
+      const term = terminalRef.current;
+      if (!term || !terminalReady) return;
+      term.options.theme = readTerminalTheme();
+    }, [resolvedThemeId, terminalReady]);
 
     useEffect(() => {
       const term = terminalRef.current;

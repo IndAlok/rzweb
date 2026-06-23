@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a problem with RzWeb
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I open a binary and switch to the Graph view, ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps so we can see it too.
+      placeholder: |
+        1. Open a binary (file type / arch if relevant)
+        2. Go to '...'
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: binary
+    attributes:
+      label: Binary format / architecture
+      description: e.g. ELF x86-64, PE arm64, Mach-O. Omit if not file-specific.
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Browser & OS
+      description: e.g. Chrome 140 on Windows 11, Firefox 142 on macOS 15.
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: Any errors from the browser devtools console (will be rendered as code).
+      render: shell
+    validations:
+      required: false

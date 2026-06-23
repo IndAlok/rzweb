@@ -78,6 +78,8 @@ export interface RizinStateSnapshot {
   notices: RizinNotice[];
   lastStderr: string;
   fileName: string | null;
+  writeMode: boolean;
+  isDirty: boolean;
 }
 
 export type RizinRequest =
@@ -90,6 +92,12 @@ export type RizinRequest =
   | { id: number; method: 'getDecompilation'; address: number }
   | { id: number; method: 'exportProject' }
   | { id: number; method: 'importProject'; data: Uint8Array }
+  | { id: number; method: 'setWriteMode'; enable: boolean }
+  | { id: number; method: 'readFileSlice'; offset: number; length: number }
+  | { id: number; method: 'searchFileBytes'; needle: Uint8Array; caseInsensitive: boolean }
+  | { id: number; method: 'patchFile'; offset: number; hex: string }
+  | { id: number; method: 'exportBinary' }
+  | { id: number; method: 'runScript'; source: string; language: 'rz' | 'js' }
   | { id: number; method: 'close' };
 
 export type RizinMethod = RizinRequest['method'];
@@ -110,6 +118,12 @@ export interface RizinResultMap {
     analysis: AnalysisData | null;
     commandCatalog: Record<string, RizinCommandHelpEntry>;
   };
+  setWriteMode: { writeMode: boolean };
+  readFileSlice: { bytes: Uint8Array };
+  searchFileBytes: { matches: number[] };
+  patchFile: { ok: boolean; error?: string };
+  exportBinary: { data: Uint8Array; name: string };
+  runScript: { output: string; error?: string };
   close: Record<string, never>;
 }
 

@@ -8,6 +8,9 @@ export type ActivePanel =
   | 'strings'
   | 'graph'
   | 'xrefs'
+  | 'scripts'
+  | 'flags'
+  | 'callgraph'
   | 'imports'
   | 'exports'
   | 'sections'
@@ -22,6 +25,8 @@ interface UIState {
   currentAddress: number;
   selectedFunction: string | null;
   currentView: ActivePanel;
+  // Seek the (physical-offset) Hex view from other views.
+  hexTarget: { offset: number; nonce: number } | null;
 
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
@@ -32,6 +37,7 @@ interface UIState {
   setShortcutsDialogOpen: (open: boolean) => void;
   setCurrentAddress: (address: number) => void;
   setSelectedFunction: (name: string | null) => void;
+  setHexTarget: (offset: number) => void;
 }
 
 export const useUIStore = create<UIState>()((set) => ({
@@ -43,6 +49,7 @@ export const useUIStore = create<UIState>()((set) => ({
   currentAddress: 0,
   selectedFunction: null,
   currentView: 'terminal',
+  hexTarget: null,
 
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -53,4 +60,5 @@ export const useUIStore = create<UIState>()((set) => ({
   setShortcutsDialogOpen: (shortcutsDialogOpen) => set({ shortcutsDialogOpen }),
   setCurrentAddress: (currentAddress) => set({ currentAddress }),
   setSelectedFunction: (selectedFunction) => set({ selectedFunction }),
+  setHexTarget: (offset) => set((state) => ({ hexTarget: { offset, nonce: (state.hexTarget?.nonce ?? 0) + 1 } })),
 }));

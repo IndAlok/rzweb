@@ -3,77 +3,259 @@
 @tailwind utilities;
 
 @layer base {
+  /* Default tokens (Rizin Dark). A concrete theme is applied via data-theme. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 199 89% 48%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --success: 142 76% 36%;
-    --success-foreground: 210 40% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 222.2 47.4% 11.2%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 199 89% 48%;
     --radius: 0.5rem;
 
-    --code-keyword: 271 81% 56%;
-    --code-string: 141 71% 36%;
-    --code-number: 27 96% 44%;
-    --code-comment: 215 14% 54%;
-    --code-function: 199 89% 48%;
-    --code-operator: 0 0% 40%;
-    --code-register: 340 82% 52%;
-    --code-address: 27 96% 44%;
-    --code-instruction: 199 89% 48%;
+    --background: 218 27% 9%;
+    --foreground: 213 27% 90%;
+    --card: 218 24% 12%;
+    --card-foreground: 213 27% 90%;
+    --popover: 218 26% 11%;
+    --popover-foreground: 213 27% 90%;
+    --primary: 199 89% 50%;
+    --primary-foreground: 213 40% 98%;
+    --secondary: 217 20% 18%;
+    --secondary-foreground: 213 27% 90%;
+    --muted: 217 20% 16%;
+    --muted-foreground: 215 16% 62%;
+    --accent: 217 22% 22%;
+    --accent-foreground: 213 27% 92%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 98%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 222 47% 11%;
+    --border: 217 19% 20%;
+    --input: 217 19% 22%;
+    --ring: 199 89% 50%;
+
+    --code-keyword: 265 85% 78%;
+    --code-string: 95 45% 64%;
+    --code-number: 32 95% 62%;
+    --code-comment: 220 12% 52%;
+    --code-function: 199 89% 66%;
+    --code-operator: 213 15% 75%;
+    --code-register: 340 80% 72%;
+    --code-address: 32 95% 60%;
+    --code-instruction: 199 89% 66%;
   }
 
-  .dark {
-    --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
-    --card: 224 71% 4%;
-    --card-foreground: 213 31% 91%;
-    --popover: 224 71% 4%;
-    --popover-foreground: 213 31% 91%;
-    --primary: 199 89% 48%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 215 28% 17%;
-    --secondary-foreground: 213 31% 91%;
-    --muted: 215 28% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 215 28% 17%;
-    --accent-foreground: 213 31% 91%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
-    --success: 142 76% 36%;
-    --success-foreground: 210 40% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 222.2 47.4% 11.2%;
-    --border: 215 28% 17%;
-    --input: 215 28% 17%;
-    --ring: 199 89% 48%;
+  :root[data-theme='midnight'] {
+    --background: 230 42% 7%;
+    --foreground: 220 30% 92%;
+    --card: 230 38% 10%;
+    --card-foreground: 220 30% 92%;
+    --popover: 230 40% 9%;
+    --popover-foreground: 220 30% 92%;
+    --primary: 190 95% 52%;
+    --primary-foreground: 230 45% 8%;
+    --secondary: 230 30% 17%;
+    --secondary-foreground: 220 30% 92%;
+    --muted: 230 30% 15%;
+    --muted-foreground: 222 18% 64%;
+    --accent: 250 50% 26%;
+    --accent-foreground: 220 30% 95%;
+    --destructive: 350 80% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 152 70% 48%;
+    --success-foreground: 0 0% 98%;
+    --warning: 40 95% 58%;
+    --warning-foreground: 230 45% 8%;
+    --border: 230 28% 18%;
+    --input: 230 28% 20%;
+    --ring: 190 95% 52%;
 
-    --code-keyword: 271 91% 65%;
-    --code-string: 95 38% 62%;
-    --code-number: 32 98% 56%;
-    --code-comment: 215 14% 54%;
-    --code-function: 187 92% 69%;
-    --code-operator: 0 0% 80%;
-    --code-register: 340 95% 70%;
-    --code-address: 32 98% 56%;
-    --code-instruction: 187 92% 69%;
+    --code-keyword: 250 90% 78%;
+    --code-string: 160 65% 60%;
+    --code-number: 40 95% 64%;
+    --code-comment: 228 16% 52%;
+    --code-function: 190 95% 68%;
+    --code-operator: 220 18% 78%;
+    --code-register: 320 85% 74%;
+    --code-address: 40 95% 62%;
+    --code-instruction: 190 95% 68%;
+  }
+
+  :root[data-theme='nord'] {
+    --background: 220 16% 22%;
+    --foreground: 218 27% 88%;
+    --card: 222 16% 25%;
+    --card-foreground: 218 27% 88%;
+    --popover: 222 16% 24%;
+    --popover-foreground: 218 27% 88%;
+    --primary: 193 43% 67%;
+    --primary-foreground: 220 28% 16%;
+    --secondary: 220 17% 30%;
+    --secondary-foreground: 218 27% 88%;
+    --muted: 220 17% 28%;
+    --muted-foreground: 219 18% 70%;
+    --accent: 213 32% 52%;
+    --accent-foreground: 218 27% 94%;
+    --destructive: 354 42% 56%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 92 28% 65%;
+    --success-foreground: 220 28% 16%;
+    --warning: 40 71% 73%;
+    --warning-foreground: 220 28% 16%;
+    --border: 220 17% 32%;
+    --input: 220 17% 34%;
+    --ring: 193 43% 67%;
+
+    --code-keyword: 213 32% 62%;
+    --code-string: 92 28% 65%;
+    --code-number: 311 20% 70%;
+    --code-comment: 220 15% 55%;
+    --code-function: 179 25% 65%;
+    --code-operator: 218 27% 80%;
+    --code-register: 354 42% 64%;
+    --code-address: 311 20% 70%;
+    --code-instruction: 179 25% 65%;
+  }
+
+  :root[data-theme='dracula'] {
+    --background: 231 15% 18%;
+    --foreground: 60 30% 96%;
+    --card: 232 14% 22%;
+    --card-foreground: 60 30% 96%;
+    --popover: 232 14% 21%;
+    --popover-foreground: 60 30% 96%;
+    --primary: 265 89% 78%;
+    --primary-foreground: 231 15% 12%;
+    --secondary: 232 14% 28%;
+    --secondary-foreground: 60 30% 96%;
+    --muted: 232 14% 26%;
+    --muted-foreground: 225 20% 70%;
+    --accent: 326 100% 74%;
+    --accent-foreground: 231 15% 12%;
+    --destructive: 0 100% 67%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 135 94% 65%;
+    --success-foreground: 231 15% 12%;
+    --warning: 65 92% 76%;
+    --warning-foreground: 231 15% 12%;
+    --border: 232 14% 30%;
+    --input: 232 14% 32%;
+    --ring: 265 89% 78%;
+
+    --code-keyword: 326 100% 74%;
+    --code-string: 65 92% 76%;
+    --code-number: 265 89% 80%;
+    --code-comment: 225 27% 58%;
+    --code-function: 135 94% 65%;
+    --code-operator: 60 30% 90%;
+    --code-register: 31 100% 71%;
+    --code-address: 31 100% 71%;
+    --code-instruction: 191 97% 77%;
+  }
+
+  :root[data-theme='carbon'] {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 88%;
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 88%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 88%;
+    --primary: 35 95% 55%;
+    --primary-foreground: 0 0% 8%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 88%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 58%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 92%;
+    --destructive: 4 80% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 65% 48%;
+    --success-foreground: 0 0% 8%;
+    --warning: 45 95% 55%;
+    --warning-foreground: 0 0% 8%;
+    --border: 0 0% 18%;
+    --input: 0 0% 20%;
+    --ring: 35 95% 55%;
+
+    --code-keyword: 35 95% 62%;
+    --code-string: 142 50% 62%;
+    --code-number: 28 95% 64%;
+    --code-comment: 0 0% 46%;
+    --code-function: 200 80% 66%;
+    --code-operator: 0 0% 78%;
+    --code-register: 330 75% 70%;
+    --code-address: 35 95% 60%;
+    --code-instruction: 200 80% 66%;
+  }
+
+  :root[data-theme='rizin-light'] {
+    --background: 0 0% 100%;
+    --foreground: 222 30% 14%;
+    --card: 210 33% 99%;
+    --card-foreground: 222 30% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 14%;
+    --primary: 199 89% 44%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 30% 95%;
+    --secondary-foreground: 222 30% 20%;
+    --muted: 210 30% 95%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 210 36% 93%;
+    --accent-foreground: 222 30% 18%;
+    --destructive: 0 75% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 70% 34%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --border: 214 24% 88%;
+    --input: 214 24% 86%;
+    --ring: 199 89% 44%;
+
+    --code-keyword: 271 70% 50%;
+    --code-string: 142 60% 32%;
+    --code-number: 25 90% 42%;
+    --code-comment: 215 14% 50%;
+    --code-function: 199 89% 40%;
+    --code-operator: 0 0% 35%;
+    --code-register: 340 70% 48%;
+    --code-address: 25 90% 42%;
+    --code-instruction: 199 89% 40%;
+  }
+
+  :root[data-theme='solarized-light'] {
+    --background: 44 87% 94%;
+    --foreground: 196 13% 35%;
+    --card: 46 42% 90%;
+    --card-foreground: 196 13% 35%;
+    --popover: 44 60% 92%;
+    --popover-foreground: 196 13% 35%;
+    --primary: 205 69% 49%;
+    --primary-foreground: 44 87% 96%;
+    --secondary: 46 33% 86%;
+    --secondary-foreground: 196 18% 30%;
+    --muted: 46 33% 86%;
+    --muted-foreground: 195 12% 48%;
+    --accent: 175 35% 80%;
+    --accent-foreground: 196 18% 26%;
+    --destructive: 1 71% 52%;
+    --destructive-foreground: 44 87% 96%;
+    --success: 68 75% 30%;
+    --success-foreground: 44 87% 96%;
+    --warning: 45 100% 32%;
+    --warning-foreground: 44 87% 96%;
+    --border: 46 25% 80%;
+    --input: 46 25% 78%;
+    --ring: 205 69% 49%;
+
+    --code-keyword: 68 100% 28%;
+    --code-string: 175 59% 36%;
+    --code-number: 18 80% 44%;
+    --code-comment: 180 7% 56%;
+    --code-function: 205 69% 45%;
+    --code-operator: 196 13% 40%;
+    --code-register: 331 64% 52%;
+    --code-address: 18 80% 44%;
+    --code-instruction: 205 69% 45%;
   }
 }
 
@@ -111,7 +293,7 @@
 
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--muted)) transparent;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -124,12 +306,12 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--muted));
+    background-color: hsl(var(--muted-foreground) / 0.35);
     border-radius: 4px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--muted-foreground));
+    background-color: hsl(var(--muted-foreground) / 0.6);
   }
 
   .scrollbar-hidden {
@@ -222,6 +404,6 @@
 }
 
 .xterm-viewport::-webkit-scrollbar-thumb {
-  background-color: hsl(var(--muted));
+  background-color: hsl(var(--muted-foreground) / 0.35);
   border-radius: 4px;
 }

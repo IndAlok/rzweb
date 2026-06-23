@@ -49,9 +49,12 @@ export class RizinInstance {
   private _cacheHit = false;
   private notices: RizinNotice[] = [];
   private lastStderr = '';
+  private _writeMode = false;
+  private _isDirty = false;
 
   private noticeCallbacks: Array<(notice: RizinNotice) => void> = [];
   private analysisCallbacks: Array<() => void> = [];
+  private stateCallbacks: Array<() => void> = [];
 
   constructor(worker: Worker) {
     this.worker = worker;
@@ -69,6 +72,14 @@ export class RizinInstance {
 
   get cacheHit(): boolean {
     return this._cacheHit;
+  }
+
+  get isWriteMode(): boolean {
+    return this._writeMode;
+  }
+
+  get isDirty(): boolean {
+    return this._isDirty;
   }
 
   get allNotices(): RizinNotice[] {
@@ -131,6 +142,33 @@ export class RizinInstance {
     this.commandCatalog = result.commandCatalog;
   }
 
+  async setWriteMode(enable: boolean): Promise<boolean> {
+    const result = await this.send<'setWriteMode'>({ id: ++this.nextId, method: 'setWriteMode', enable });
+    return result.writeMode;
+  }
+
+  async readFileSlice(offset: number, length: number): Promise<Uint8Array> {
+    const result = await this.send<'readFileSlice'>({ id: ++this.nextId, method: 'readFileSlice', offset, length });
+    return result.bytes;
+  }
+
+  async searchFileBytes(needle: Uint8Array, caseInsensitive: boolean): Promise<number[]> {
+    const result = await this.send<'searchFileBytes'>({ id: ++this.nextId, method: 'searchFileBytes', needle, caseInsensitive });
+    return result.matches;
+  }
+
+  async patchFile(offset: number, hex: string): Promise<{ ok: boolean; error?: string }> {
+    return this.send<'patchFile'>({ id: ++this.nextId, method: 'patchFile', offset, hex });
+  }
+
+  async exportBinary(): Promise<{ data: Uint8Array; name: string }> {
+    return this.send<'exportBinary'>({ id: ++this.nextId, method: 'exportBinary' });
+  }
+
+  async runScript(source: string, language: 'rz' | 'js'): Promise<{ output: string; error?: string }> {
+    return this.send<'runScript'>({ id: ++this.nextId, method: 'runScript', source, language });
+  }
+
   getCommandCatalog(): Record<string, RizinCommandHelpEntry> {
     return this.commandCatalog;
   }
@@ -154,6 +192,14 @@ export class RizinInstance {
     this.analysisCallbacks.push(callback);
     return () => {
       this.analysisCallbacks = this.analysisCallbacks.filter(cb => cb !== callback);
+    };
+  }
+
+  // Fires after each state snapshot so the UI can track write-mode and dirty flags.
+  onStateChanged(callback: () => void): () => void {
+    this.stateCallbacks.push(callback);
+    return () => {
+      this.stateCallbacks = this.stateCallbacks.filter(cb => cb !== callback);
     };
   }
 
@@ -217,6 +263,9 @@ export class RizinInstance {
     this._cacheHit = state.cacheHit;
     this.notices = state.notices;
     this.lastStderr = state.lastStderr;
+    this._writeMode = state.writeMode;
+    this._isDirty = state.isDirty;
+    this.stateCallbacks.forEach(cb => cb());
   }
 
   private dispose(): void {
@@ -227,5 +276,6 @@ export class RizinInstance {
     this.pending.clear();
     this.noticeCallbacks = [];
     this.analysisCallbacks = [];
+    this.stateCallbacks = [];
   }
 }

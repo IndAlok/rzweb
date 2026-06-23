@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Command } from 'cmdk';
-import { Search, Code, Terminal, Share2, Quote, Layout, Keyboard, Settings, Package, ArrowUpRight, Layers, Info, FunctionSquare, Hash, ChevronRight, Braces, ArrowLeftRight } from 'lucide-react';
+import { Search, Code, Terminal, Share2, Quote, Layout, Keyboard, Settings, Package, ArrowUpRight, Layers, Info, FunctionSquare, Hash, ChevronRight, Braces, ArrowLeftRight, ScrollText, Flag, Network } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useUIStore, type ActivePanel } from '@/stores';
 import { VIEW_SHORTCUTS, EXTRA_VIEWS, ALT_KEY, MOD_KEY } from '@/lib/shortcuts';
@@ -15,6 +15,9 @@ const VIEW_ICONS: Record<ActivePanel, LucideIcon> = {
   strings: Quote,
   graph: Share2,
   xrefs: ArrowLeftRight,
+  scripts: ScrollText,
+  flags: Flag,
+  callgraph: Network,
   imports: Package,
   exports: ArrowUpRight,
   sections: Layers,

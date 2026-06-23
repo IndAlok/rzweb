@@ -24,9 +24,9 @@ async function fetchVersion(): Promise<string> {
       }
     }
   } catch {
-
+    // Local /VERSION missing, fall through to the remote source.
   }
-  
+
   try {
     const base =
       (import.meta as unknown as { env?: { VITE_WASM_BASE_URL?: string } }).env?.VITE_WASM_BASE_URL?.replace(/\/+$/, '') ||
@@ -39,9 +39,9 @@ async function fetchVersion(): Promise<string> {
       }
     }
   } catch {
-
+    // Remote VERSION unreachable (offline build), report unknown rather than throw.
   }
-  
+
   return 'unknown';
 }
 

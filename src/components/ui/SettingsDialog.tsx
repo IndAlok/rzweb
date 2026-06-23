@@ -1,8 +1,10 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, Tabs, TabsList, TabsTrigger, TabsContent, ScrollArea, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui';
 import { useFileStore, useUIStore, useSettingsStore } from '@/stores';
 import { useTheme } from '@/providers';
-import { Settings, Monitor, Terminal, Database, Sliders, Moon, Sun, Laptop, Trash2 } from 'lucide-react';
+import { Settings, Monitor, Terminal, Database, Sliders, Laptop, Check, Trash2 } from 'lucide-react';
 import { clearAnalysisCache, computeFileHash, getCacheStats, removeCachedAnalysis, type CacheStats } from '@/lib/rizin';
+import { cn } from '@/lib/utils';
+import { THEMES } from '@/lib/themes';
 import { useState, useEffect } from 'react';
 
 const ANALYSIS_LEVELS = [
@@ -67,32 +69,54 @@ export function SettingsDialog() {
                 <div className="space-y-6 p-4 sm:p-6">
                   <TabsContent value="general" className="m-0 space-y-4">
                     <section>
-                      <h4 className="text-sm font-semibold mb-3">Theme</h4>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                        <Button
-                          variant={theme === 'light' ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setTheme('light')}
-                          className="w-full"
-                        >
-                          <Sun className="h-4 w-4 mr-2" /> Light
-                        </Button>
-                        <Button
-                          variant={theme === 'dark' ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setTheme('dark')}
-                          className="w-full"
-                        >
-                          <Moon className="h-4 w-4 mr-2" /> Dark
-                        </Button>
-                        <Button
-                          variant={theme === 'system' ? 'default' : 'outline'}
-                          size="sm"
+                      <h4 className="text-sm font-semibold mb-1">Theme</h4>
+                      <p className="mb-3 text-[10px] text-muted-foreground">
+                        Applies across every view, including the terminal.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <button
+                          type="button"
                           onClick={() => setTheme('system')}
-                          className="w-full"
+                          className={cn(
+                            'flex flex-col gap-2 rounded-lg border p-2 text-left transition',
+                            theme === 'system' ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50'
+                          )}
                         >
-                          <Laptop className="h-4 w-4 mr-2" /> System
-                        </Button>
+                          <div className="relative flex h-11 w-full overflow-hidden rounded-md border border-border/50">
+                            <div className="w-1/2 bg-white" />
+                            <div className="w-1/2 bg-[#0f1521]" />
+                            <Laptop className="absolute inset-0 m-auto h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium">System</span>
+                            {theme === 'system' && <Check className="h-3.5 w-3.5 text-primary" />}
+                          </div>
+                        </button>
+
+                        {THEMES.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setTheme(t.id)}
+                            className={cn(
+                              'flex flex-col gap-2 rounded-lg border p-2 text-left transition',
+                              theme === t.id ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50'
+                            )}
+                          >
+                            <div
+                              className="relative h-11 w-full overflow-hidden rounded-md border border-border/50"
+                              style={{ background: t.swatch.bg }}
+                            >
+                              <span className="absolute left-2 top-2 h-2.5 w-2.5 rounded-full" style={{ background: t.swatch.primary }} />
+                              <span className="absolute left-[1.35rem] top-2 h-2.5 w-2.5 rounded-full" style={{ background: t.swatch.accent }} />
+                              <span className="absolute bottom-1.5 left-2 right-2 h-2 rounded" style={{ background: t.swatch.surface }} />
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium">{t.name}</span>
+                              {theme === t.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                            </div>
+                          </button>
+                        ))}
                       </div>
                     </section>
                   </TabsContent>

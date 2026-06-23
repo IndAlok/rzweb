@@ -13,7 +13,7 @@ import type {
 } from './rizinProtocol';
 
 // Set VITE_WASM_BASE_URL to point the worker at a local or preview rzwasi
-// build (e.g. one that bundles the jsdec decompiler); defaults to the hosted CDN.
+// build (e.g. one that bundles the jsdec decompiler). Defaults to the hosted CDN.
 const WASM_BASE_URL =
   (import.meta.env.VITE_WASM_BASE_URL as string | undefined)?.replace(/\/+$/, '') ||
   'https://indalok.github.io/rzwasi';
@@ -24,7 +24,7 @@ const FLUSH_THRESHOLD = 65536;
 interface WorkerScope {
   Module?: unknown;
   postMessage: (message: unknown) => void;
-  addEventListener: (type: 'message', listener: (event: { data: RizinInbound }) => void) => void;
+  addEventListener: (type: 'message', listener: (event: { data: RizinInbound; origin: string }) => void) => void;
   importScripts?: (...urls: string[]) => void;
 }
 
@@ -130,15 +130,14 @@ function init(): void {
 }
 
 // Loads the Emscripten glue regardless of worker type. Classic workers (the
-// production build) use importScripts; Vite's dev module workers can't, so the
+// production build) use importScripts. Vite dev module workers cannot, so the
 // classic glue is fetched and run in global scope with importScripts shimmed so
 // Emscripten still detects a worker. locateFile pins the wasm to its own host.
 async function loadRuntime(): Promise<void> {
   const url = `${WASM_BASE_URL}/rizin.js`;
-  // Classic workers (production build) load the glue with importScripts. Module
-  // workers (Vite dev) DEFINE importScripts but throw "Module scripts don't
-  // support importScripts()" when it's called, so typeof can't discriminate —
-  // try it and fall back to fetch + indirect eval on any failure.
+  // Module workers DEFINE importScripts but throw when it is called, so typeof
+  // cannot discriminate. Try it and fall back to fetch + indirect eval on any
+  // failure.
   if (typeof ctx.importScripts === 'function') {
     try {
       ctx.importScripts(url);
@@ -151,7 +150,7 @@ async function loadRuntime(): Promise<void> {
   if (!response.ok) throw new Error(`HTTP ${response.status} fetching rizin.js`);
   const source = await response.text();
   // Stub importScripts so the sloppy-mode glue (which feature-detects it) finds a
-  // callable; locateFile already pins the wasm to its own host.
+  // callable. locateFile already pins the wasm to its own host.
   ctx.importScripts = () => {};
   (0, eval)(source);
 }
@@ -184,6 +183,18 @@ async function dispatch(active: RizinSession, request: RizinRequest): Promise<Ri
         analysis: active.snapshotAnalysis(),
         commandCatalog: active.getCommandCatalog(),
       };
+    case 'setWriteMode':
+      return { writeMode: active.setWriteMode(request.enable) };
+    case 'readFileSlice':
+      return { bytes: active.readFileSlice(request.offset, request.length) };
+    case 'searchFileBytes':
+      return { matches: active.searchFileBytes(request.needle, request.caseInsensitive) };
+    case 'patchFile':
+      return active.patchFile(request.offset, request.hex);
+    case 'exportBinary':
+      return await active.exportBinary();
+    case 'runScript':
+      return active.runScript(request.source, request.language);
     case 'close':
       await active.close();
       return {};
@@ -205,7 +216,12 @@ async function handleRequest(request: RizinRequest): Promise<void> {
 }
 
 ctx.addEventListener('message', event => {
+  // A dedicated worker only receives messages from the same-origin page that
+  // spawned it (origin is the empty string for those). Reject anything that
+  // arrives with a foreign origin as defense in depth.
+  if (event.origin && event.origin !== self.location.origin) return;
   const message = event.data;
+  if (!message || typeof message !== 'object') return;
   if ('control' in message) {
     if (message.control === 'init') init();
     return;

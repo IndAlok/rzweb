@@ -168,7 +168,7 @@ export async function setCachedAnalysis(entry: CachedAnalysis): Promise<void> {
     await db.put(STORE_NAME, stored);
     await evictIfNeeded(db);
   } catch {
-    // IndexedDB writes are best-effort; analysis can still continue without a cache write.
+    // IndexedDB writes are best-effort. Analysis still continues without a cache write.
   }
 }
 
@@ -263,6 +263,6 @@ export async function removeCachedAnalysis(hash: string): Promise<void> {
     const db = await getDB();
     await deleteEntry(db, hash);
   } catch {
-    // Ignore cache-delete failures; stale entries will be skipped when detected later.
+    // Ignore delete failures. Stale entries are skipped when detected later.
   }
 }

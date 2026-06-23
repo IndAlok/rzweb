@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Community chat (Telegram)
+    url: https://telegram.dog/rizinweb
+    about: Questions, ideas, and general discussion.
+  - name: rzwasi (WebAssembly build)
+    url: https://github.com/IndAlok/rzwasi/issues
+    about: Issues with the Rizin to WASM build, missing commands, or the session API.
