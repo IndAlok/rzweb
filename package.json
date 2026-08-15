@@ -48,7 +48,7 @@
     "cytoscape": "^3.34.0",
     "cytoscape-dagre": "^4.0.0",
     "idb": "^8.0.3",
-    "lucide-react": "^0.400.0",
+    "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-error-boundary": "^6.1.2",
