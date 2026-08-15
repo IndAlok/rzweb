@@ -45,7 +45,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "coi-serviceworker": "^0.1.7",
-    "cytoscape": "^3.34.0",
+    "cytoscape": "^3.34.1",
     "cytoscape-dagre": "^4.0.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.400.0",
@@ -55,7 +55,7 @@
     "react-hotkeys-hook": "^5.3.3",
     "react-resizable-panels": "^4.12.2",
     "react-router-dom": "^7.18.0",
-    "sonner": "^1.7.4",
+    "sonner": "^2.0.8",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.14"
   },
@@ -76,7 +76,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
     "vite": "^7.3.5",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "js-yaml": "4.3.1",
