@@ -5,9 +5,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     groups:
-
       minor-and-patch:
         applies-to: version-updates
         update-types:
@@ -23,24 +22,14 @@ updates:
           - react-router
           - react-router-dom
     ignore:
+      # Stop the post-merge flood of breaking majors (Vite 8, ESLint 10, Tailwind 4, …).
+      # Security updates are not affected.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@xterm/*"
       - dependency-name: react-router
         update-types: ["version-update:semver-major"]
       - dependency-name: react-router-dom
-        update-types: ["version-update:semver-major"]
-      # Held until a coordinated xterm 6 + addon upgrade. Addon minors target core 6.
-      - dependency-name: "@xterm/*"
-      # These majors fail CI or require a framework rewrite (Tailwind 4).
-      - dependency-name: tailwindcss
-        update-types: ["version-update:semver-major"]
-      - dependency-name: tailwind-merge
-        update-types: ["version-update:semver-major"]
-      - dependency-name: typescript
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@eslint/js"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: eslint-plugin-react-hooks
-        update-types: ["version-update:semver-major"]
-      - dependency-name: lucide-react
         update-types: ["version-update:semver-major"]
     labels:
       - dependencies
