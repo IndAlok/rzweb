@@ -48,7 +48,7 @@
     "cytoscape": "^3.34.1",
     "cytoscape-dagre": "^4.0.0",
     "idb": "^8.0.3",
-    "lucide-react": "^0.400.0",
+    "lucide-react": "^0.577.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-error-boundary": "^6.1.2",
@@ -56,11 +56,11 @@
     "react-resizable-panels": "^4.12.2",
     "react-router-dom": "^7.18.0",
     "sonner": "^2.0.8",
-    "tailwind-merge": "^2.6.0",
+    "tailwind-merge": "^2.6.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@eslint/js": "^9.18.0",
+    "@eslint/js": "^9.39.5",
     "@types/cytoscape": "^3.31.0",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
