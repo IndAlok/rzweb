@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { formatAddress } from '@/lib/utils/format';
 import { ArrowLeftRight, ArrowRight, ArrowLeft } from 'lucide-react';
-import type { RizinInstance, XrefEntry } from '@/lib/rizin';
+import type { RizinInstance, XrefEntry, XrefsResult } from '@/lib/rizin';
 
 interface XrefsViewProps {
   rizin: RizinInstance;
@@ -33,15 +33,13 @@ function XrefRow({ entry, onSeek }: { entry: XrefEntry; onSeek?: (address: numbe
 }
 
 export function XrefsView({ rizin, address, onSeek, className }: XrefsViewProps) {
-  const [to, setTo] = useState<XrefEntry[]>([]);
-  const [from, setFrom] = useState<XrefEntry[]>([]);
+  const [result, setResult] = useState<XrefsResult>({ to: [], from: [], source: 'empty' });
   const [loading, setLoading] = useState(false);
   const requestRef = useRef(0);
 
   useEffect(() => {
     if (address <= 0) {
-      setTo([]);
-      setFrom([]);
+      setResult({ to: [], from: [], source: 'empty' });
       return;
     }
 
@@ -49,15 +47,18 @@ export function XrefsView({ rizin, address, onSeek, className }: XrefsViewProps)
     setLoading(true);
     rizin
       .getXrefs(address)
-      .then((result) => {
+      .then((next) => {
         if (requestId !== requestRef.current) return;
-        setTo(result.to);
-        setFrom(result.from);
+        setResult(next);
       })
       .catch(() => {
         if (requestId !== requestRef.current) return;
-        setTo([]);
-        setFrom([]);
+        setResult({
+          to: [],
+          from: [],
+          source: 'empty',
+          error: 'Failed to load cross-references from Rizin.',
+        });
       })
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
@@ -73,6 +74,8 @@ export function XrefsView({ rizin, address, onSeek, className }: XrefsViewProps)
     );
   }
 
+  const { to, from, error } = result;
+
   return (
     <div className={cn('flex h-full flex-col overflow-auto', className)}>
       <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
@@ -83,11 +86,17 @@ export function XrefsView({ rizin, address, onSeek, className }: XrefsViewProps)
         {loading && <span className="ml-auto text-[10px] text-muted-foreground">Loading...</span>}
       </div>
 
+      {error && (
+        <p className="border-b border-border/50 px-3 py-2 text-xs text-muted-foreground">{error}</p>
+      )}
+
       <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-emerald-500">
         <ArrowLeft className="h-3 w-3" /> Referenced from ({to.length})
       </div>
       {to.length === 0 ? (
-        <p className="px-3 py-1 text-xs text-muted-foreground">No incoming references.</p>
+        <p className="px-3 py-1 text-xs text-muted-foreground">
+          {error ? 'Incoming references were not returned.' : 'No incoming references.'}
+        </p>
       ) : (
         to.map((entry, i) => <XrefRow key={`to-${i}`} entry={entry} onSeek={onSeek} />)
       )}
@@ -96,7 +105,9 @@ export function XrefsView({ rizin, address, onSeek, className }: XrefsViewProps)
         <ArrowRight className="h-3 w-3" /> Calls / references out ({from.length})
       </div>
       {from.length === 0 ? (
-        <p className="px-3 py-1 text-xs text-muted-foreground">No outgoing references.</p>
+        <p className="px-3 py-1 text-xs text-muted-foreground">
+          {error ? 'Outgoing references were not returned.' : 'No outgoing references.'}
+        </p>
       ) : (
         from.map((entry, i) => <XrefRow key={`from-${i}`} entry={entry} onSeek={onSeek} />)
       )}

@@ -1,0 +1,13 @@
+[
+  {
+    "from": 4198416,
+    "to": 4198600,
+    "type": "CALL",
+    "opcode": "call sym.imp.puts"
+  },
+  {
+    "from": 4198432,
+    "to": 4210688,
+    "type": "DATA"
+  }
+]

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { useTheme } from '@/providers';
 import { cn, cssVarHex } from '@/lib/utils';
-import { Share2, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { Share2, ZoomIn, ZoomOut, Maximize, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui';
+import { CFG_BLOCK_CAP, CALL_GRAPH_NODE_CAP } from '@/lib/rizin/analysisModel';
 
 cytoscape.use(dagre);
 
@@ -28,9 +29,11 @@ interface GraphViewProps {
   currentAddress?: number;
   onSeek?: (address: number) => void;
   className?: string;
+  variant?: 'cfg' | 'call';
+  truncated?: boolean;
+  emptyHint?: string;
 }
 
-// Reads graph colors from active theme tokens so CFG matches every theme.
 function readPalette() {
   return {
     nodeBg: cssVarHex('--card'),
@@ -45,8 +48,9 @@ function readPalette() {
   };
 }
 
-function buildStylesheet(): cytoscape.StylesheetStyle[] {
+function buildStylesheet(variant: 'cfg' | 'call'): cytoscape.StylesheetStyle[] {
   const c = readPalette();
+  const isCall = variant === 'call';
   return [
     {
       selector: 'node',
@@ -58,15 +62,15 @@ function buildStylesheet(): cytoscape.StylesheetStyle[] {
         'text-valign': 'center',
         'text-halign': 'center',
         'text-wrap': 'wrap',
-        'text-max-width': '400px',
-        width: '420px',
+        'text-max-width': isCall ? '120px' : '400px',
+        width: isCall ? '140px' : '420px',
         height: 'data(h)',
-        padding: '14px',
+        padding: isCall ? '8px' : '14px',
         'border-width': 2,
         'border-color': c.nodeBorder,
         'font-family': 'JetBrains Mono, Consolas, monospace',
-        'font-size': '10px',
-        'text-justification': 'left',
+        'font-size': isCall ? '11px' : '10px',
+        'text-justification': isCall ? 'center' : 'left',
         'min-height': '32px',
       },
     },
@@ -101,26 +105,38 @@ function buildStylesheet(): cytoscape.StylesheetStyle[] {
   ];
 }
 
-export function GraphView({ nodes, edges, currentAddress, onSeek, className }: GraphViewProps) {
+export function GraphView({
+  nodes,
+  edges,
+  currentAddress,
+  onSeek,
+  className,
+  variant = 'cfg',
+  truncated = false,
+  emptyHint,
+}: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
   const { resolvedThemeId } = useTheme();
+  const [ready, setReady] = useState(false);
+  const layoutBudget = variant === 'call' ? CALL_GRAPH_NODE_CAP : CFG_BLOCK_CAP;
+  const tooLarge = nodes.length > layoutBudget;
 
   const elements = useMemo<cytoscape.ElementDefinition[]>(() => {
     if (!nodes.length) return [];
     const withIn = new Set(edges.map((e) => e.target));
     const withOut = new Set(edges.map((e) => e.source));
     const cyNodes = nodes.map((n) => {
-      const label = n.body ? `${n.label}\n${n.body}` : n.label;
+      const label = variant === 'cfg' && n.body ? `${n.label}\n${n.body}` : n.label;
       const lineCount = label.split('\n').length;
       return {
         data: {
           id: n.id,
           label,
           offset: n.offset,
-          h: Math.max(32, lineCount * 15 + 28),
+          h: Math.max(32, lineCount * (variant === 'call' ? 16 : 15) + (variant === 'call' ? 16 : 28)),
           type: !withIn.has(n.id) ? 'entry' : !withOut.has(n.id) ? 'exit' : 'default',
         },
       };
@@ -129,16 +145,26 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
       data: { id: `e${i}`, source: e.source, target: e.target, label: e.label, type: e.type },
     }));
     return [...cyNodes, ...cyEdges];
-  }, [nodes, edges]);
+  }, [nodes, edges, variant]);
 
   useEffect(() => {
-    if (!containerRef.current || !elements.length) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setReady(el.clientWidth > 0 && el.clientHeight > 0);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [nodes.length]);
+
+  useEffect(() => {
+    if (!containerRef.current || !elements.length || !ready || tooLarge) return;
 
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      style: buildStylesheet(),
-      layout: { name: 'dagre', rankDir: 'TB', nodeSep: 40, rankSep: 80 } as cytoscape.LayoutOptions,
+      style: buildStylesheet(variant),
+      layout: { name: 'dagre', rankDir: 'TB', nodeSep: variant === 'call' ? 24 : 40, rankSep: variant === 'call' ? 48 : 80 } as cytoscape.LayoutOptions,
     });
 
     cy.on('tap', 'node', (evt) => {
@@ -151,11 +177,11 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
       cy.destroy();
       cyRef.current = null;
     };
-  }, [elements]);
+  }, [elements, ready, tooLarge, variant]);
 
   useEffect(() => {
-    cyRef.current?.style(buildStylesheet());
-  }, [resolvedThemeId]);
+    cyRef.current?.style(buildStylesheet(variant));
+  }, [resolvedThemeId, variant]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -184,7 +210,9 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
         <Share2 className="h-12 w-12 opacity-30" />
         <div className="text-center space-y-2">
           <p className="text-sm">No graph data available</p>
-          <p className="text-xs opacity-70">Select a function to view its control flow graph.</p>
+          <p className="text-xs opacity-70">
+            {emptyHint ?? (variant === 'call' ? 'Select a function to view its call neighborhood.' : 'Select a function to view its control flow graph.')}
+          </p>
         </div>
       </div>
     );
@@ -193,6 +221,23 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
   return (
     <div className={cn('relative h-full w-full bg-background overflow-hidden', className)}>
       <div ref={containerRef} className="h-full w-full" />
+
+      {tooLarge && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/90 p-6 text-center text-sm text-muted-foreground">
+          <div className="max-w-sm space-y-2">
+            <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+            <p>This graph has {nodes.length} nodes and would freeze the browser if laid out.</p>
+            <p className="text-xs">Narrow the selection or stay in the neighborhood view.</p>
+          </div>
+        </div>
+      )}
+
+      {(truncated || tooLarge) && !tooLarge && (
+        <div className="absolute top-12 left-4 right-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>Graph was truncated to keep the layout responsive.</span>
+        </div>
+      )}
 
       <div className="absolute bottom-4 right-4 flex flex-col gap-2">
         <Button variant="secondary" size="icon-sm" onClick={handleZoomIn} title="Zoom in">
@@ -208,8 +253,8 @@ export function GraphView({ nodes, edges, currentAddress, onSeek, className }: G
 
       <div className="absolute top-4 left-4 flex items-center gap-2 rounded-md border border-border bg-background/80 p-2 text-xs shadow-sm backdrop-blur">
         <Share2 className="h-3 w-3 text-primary" />
-        <span className="font-semibold">Control Flow Graph</span>
-        <span className="text-muted-foreground">- click a block to seek</span>
+        <span className="font-semibold">{variant === 'call' ? 'Call Graph' : 'Control Flow Graph'}</span>
+        <span className="text-muted-foreground">- click a node to seek</span>
       </div>
     </div>
   );

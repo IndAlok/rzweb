@@ -7,6 +7,8 @@ export type {
   RizinNotice,
   RizinAutocompleteResult,
   RizinCommandHelpEntry,
+  CallGraphMode,
+  CallGraphResult,
   XrefEntry,
   XrefsResult,
 } from './RizinInstance';
@@ -23,3 +25,6 @@ export {
 export type { CachedAnalysis, CachedAnalysisSummary, CacheStats } from './analysisCache';
 export { encodeProjectBundle, decodeProjectBundle, isProjectBundle } from './projectBundle';
 export type { ProjectBundle } from './projectBundle';
+export { findFunctionAt } from './analysisModel';
+export { buildCfgElements, buildCallGraphFromFunctions, buildCallGraphFromAgc } from './graphs';
+export type { GraphElements } from './graphs';

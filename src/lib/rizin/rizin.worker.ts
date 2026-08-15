@@ -173,6 +173,8 @@ async function dispatch(active: RizinSession, request: RizinRequest): Promise<Ri
       return { bytes: active.readMemory(request.address, request.size) };
     case 'getXrefs':
       return { xrefs: active.getXrefs(request.address) };
+    case 'getCallGraph':
+      return { graph: active.getCallGraph(request.address, request.mode) };
     case 'getDecompilation':
       return active.getDecompilation(request.address);
     case 'exportProject':

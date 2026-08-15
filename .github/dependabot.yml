@@ -17,6 +17,14 @@ updates:
         applies-to: security-updates
         patterns:
           - '*'
+        exclude-patterns:
+          - react-router
+          - react-router-dom
+    ignore:
+      - dependency-name: react-router
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-router-dom
+        update-types: ["version-update:semver-major"]
     labels:
       - dependencies
 

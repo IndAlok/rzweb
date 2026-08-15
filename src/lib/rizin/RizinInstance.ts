@@ -15,6 +15,8 @@ import type {
   RizinResultMap,
   RizinStateSnapshot,
   RizinWorkerEvent,
+  CallGraphMode,
+  CallGraphResult,
   XrefsResult,
 } from './rizinProtocol';
 
@@ -26,6 +28,8 @@ export type {
   RizinFile,
   RizinInstanceConfig,
   RizinNotice,
+  CallGraphMode,
+  CallGraphResult,
   XrefEntry,
   XrefsResult,
 } from './rizinProtocol';
@@ -124,6 +128,11 @@ export class RizinInstance {
   async getXrefs(address: number): Promise<XrefsResult> {
     const result = await this.send<'getXrefs'>({ id: ++this.nextId, method: 'getXrefs', address });
     return result.xrefs;
+  }
+
+  async getCallGraph(address: number, mode: CallGraphMode = 'neighborhood'): Promise<CallGraphResult> {
+    const result = await this.send<'getCallGraph'>({ id: ++this.nextId, method: 'getCallGraph', address, mode });
+    return result.graph;
   }
 
   async getDecompilation(address: number): Promise<{ code: string; pseudo: boolean }> {
