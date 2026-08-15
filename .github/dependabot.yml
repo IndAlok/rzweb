@@ -13,6 +13,8 @@ updates:
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          - "@xterm/*"
       security:
         applies-to: security-updates
         patterns:
@@ -24,6 +26,21 @@ updates:
       - dependency-name: react-router
         update-types: ["version-update:semver-major"]
       - dependency-name: react-router-dom
+        update-types: ["version-update:semver-major"]
+      # Held until a coordinated xterm 6 + addon upgrade. Addon minors target core 6.
+      - dependency-name: "@xterm/*"
+      # These majors fail CI or require a framework rewrite (Tailwind 4).
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
+      - dependency-name: tailwind-merge
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint-plugin-react-hooks
+        update-types: ["version-update:semver-major"]
+      - dependency-name: lucide-react
         update-types: ["version-update:semver-major"]
     labels:
       - dependencies
