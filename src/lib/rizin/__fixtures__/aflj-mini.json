@@ -1,0 +1,29 @@
+[
+  {
+    "offset": 4198304,
+    "name": "entry0",
+    "size": 32,
+    "callrefs": [{ "addr": 4198400, "type": "CALL", "at": 4198304 }],
+    "datarefs": [],
+    "codexrefs": [],
+    "dataxrefs": []
+  },
+  {
+    "offset": 4198400,
+    "name": "main",
+    "size": 128,
+    "callrefs": [{ "addr": 4198600, "type": "CALL", "at": 4198416 }],
+    "datarefs": [4210688],
+    "codexrefs": [{ "addr": 4198304, "type": "CALL", "at": 4198304 }],
+    "dataxrefs": []
+  },
+  {
+    "offset": 4198600,
+    "name": "sym.imp.puts",
+    "size": 16,
+    "callrefs": [],
+    "datarefs": [],
+    "codexrefs": [{ "addr": 4198416, "type": "CALL", "at": 4198416 }],
+    "dataxrefs": []
+  }
+]

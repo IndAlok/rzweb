@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 
 import { useFileStore, useRizinStore, useUIStore, useSettingsStore, useTabStore, type ActivePanel } from '@/stores';
-import { loadRizinModule, getCachedVersions, RizinInstance, decodeProjectBundle, type RizinNotice } from '@/lib/rizin';
+import { loadRizinModule, getCachedVersions, RizinInstance, decodeProjectBundle, findFunctionAt, buildCfgElements, type RizinNotice } from '@/lib/rizin';
 import { useKeyboardShortcuts } from '@/hooks';
 import { RizinTerminal } from '@/components/terminal';
 import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel, XrefsView, DecompilerView, FlagsView, CallGraphView } from '@/components/views';
@@ -71,39 +71,10 @@ interface RawDisasm {
   instructions?: RawDisasmOp[];
 }
 
-interface RawGraphBlock {
-  id?: number | string;
-  offset?: number;
-  addr?: number | string;
-  vaddr?: number | string;
-  title?: string;
-  body?: string;
-  ops?: RawDisasmOp[];
-  jump?: number;
-  fail?: number;
-  out_nodes?: Array<number | string>;
-}
-
-interface RawGraphContainer {
-  nodes?: RawGraphBlock[];
-  blocks?: RawGraphBlock[];
-  graph?: { nodes?: RawGraphBlock[]; blocks?: RawGraphBlock[] };
-}
-
 type GraphElements = {
   nodes: Array<{ id: string; label: string; body?: string; offset?: number }>;
   edges: Array<{ source: string; target: string; type?: 'jump' | 'fail' | 'call' }>;
 };
-
-function parseAddress(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value !== 'string') return undefined;
-  const match = value.match(/0x[0-9a-fA-F]+|[0-9a-fA-F]{6,}/);
-  if (!match) return undefined;
-  const raw = match[0];
-  const parsed = raw.startsWith('0x') ? Number.parseInt(raw, 16) : Number.parseInt(raw, 16);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
 
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
@@ -131,6 +102,7 @@ export default function AnalysisPage() {
   const [isLoadingDisasm, setIsLoadingDisasm] = useState(false);
   const [graphNodes, setGraphNodes] = useState<GraphElements['nodes']>([]);
   const [graphEdges, setGraphEdges] = useState<GraphElements['edges']>([]);
+  const [graphTruncated, setGraphTruncated] = useState(false);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [projectAction, setProjectAction] = useState<'save' | 'load' | null>(null);
   const [writeMode, setWriteMode] = useState(false);
@@ -246,6 +218,7 @@ export default function AnalysisPage() {
       setDisasmLines([]);
       setGraphNodes([]);
       setGraphEdges([]);
+      setGraphTruncated(false);
 
       let entry = instancesRef.current.get(tabId);
       const needsLoad = !entry || !entry.ready;
@@ -362,73 +335,6 @@ export default function AnalysisPage() {
     }));
   }, []);
 
-  const buildGraphElements = useCallback((graph: unknown): GraphElements => {
-    let blocks: RawGraphBlock[] = [];
-    if (Array.isArray(graph)) {
-      const arr = graph as RawGraphBlock[];
-      const looksLikeBlocks = arr.length > 0 && arr.every(
-        (node) => !!node && typeof node === 'object' &&
-          ('offset' in node || 'id' in node || 'jump' in node || 'fail' in node || Array.isArray(node.ops))
-      );
-      if (looksLikeBlocks) {
-        blocks = arr;
-      } else if (arr.length > 0) {
-        const first = arr[0] as RawGraphContainer;
-        blocks = first?.blocks ?? first?.nodes ?? [];
-      }
-    } else if (graph && typeof graph === 'object') {
-      const container = graph as RawGraphContainer;
-      blocks = container.nodes ?? container.blocks ?? container.graph?.nodes ?? container.graph?.blocks ?? [];
-    }
-
-    if (!blocks.length) {
-      return { nodes: [], edges: [] };
-    }
-
-    const offsetToId = new Map<number, string>();
-    const nodes = blocks.map((node, idx) => {
-      const nodeId = String(node.id ?? node.offset ?? idx);
-      const nodeOffset = parseAddress(node.offset ?? node.addr ?? node.vaddr ?? node.id ?? node.title ?? node.body);
-      if (typeof nodeOffset === 'number') {
-        offsetToId.set(nodeOffset, nodeId);
-      }
-      return {
-        id: nodeId,
-        label: node.title ?? `0x${(nodeOffset ?? 0).toString(16)}`,
-        body: stripAnsi(node.body ?? node.ops?.map((op) => op.disasm ?? op.opcode ?? '').join('\n') ?? ''),
-        offset: nodeOffset,
-      };
-    });
-
-    const edges: GraphElements['edges'] = [];
-    blocks.forEach((node) => {
-      const sourceId = String(node.id ?? node.offset ?? 0);
-      const outNodes = Array.isArray(node.out_nodes) ? node.out_nodes : [];
-
-      if (outNodes.length > 0) {
-        outNodes.forEach((targetId, idx) => {
-          const edgeType = outNodes.length === 2 ? (idx === 0 ? 'jump' as const : 'fail' as const) : 'jump' as const;
-          const targetAddress = parseAddress(targetId);
-          edges.push({
-            source: sourceId,
-            target: targetAddress == null ? String(targetId) : offsetToId.get(targetAddress) ?? String(targetId),
-            type: edgeType,
-          });
-        });
-        return;
-      }
-
-      if (typeof node.jump === 'number') {
-        edges.push({ source: sourceId, target: offsetToId.get(node.jump) ?? String(node.jump), type: 'jump' });
-      }
-      if (typeof node.fail === 'number') {
-        edges.push({ source: sourceId, target: offsetToId.get(node.fail) ?? String(node.fail), type: 'fail' });
-      }
-    });
-
-    return { nodes, edges };
-  }, []);
-
   const loadFunctionPresentation = useCallback(async (address: number) => {
     if (!activeInstance) return;
 
@@ -441,21 +347,23 @@ export default function AnalysisPage() {
 
       setDisasmLines(buildDisassemblyLines(detail.disasm));
 
-      const nextGraph = buildGraphElements(detail.graph);
+      const nextGraph = buildCfgElements(detail.graph);
       setGraphNodes(nextGraph.nodes);
       setGraphEdges(nextGraph.edges);
+      setGraphTruncated(nextGraph.truncated);
     } catch (e) {
       console.error('[AnalysisPage:loadFunctionPresentation] Error:', e);
       if (requestId !== functionDetailRequestRef.current) return;
       setDisasmLines([]);
       setGraphNodes([]);
       setGraphEdges([]);
+      setGraphTruncated(false);
     } finally {
       if (requestId === functionDetailRequestRef.current) {
         setIsLoadingDisasm(false);
       }
     }
-  }, [activeInstance, buildDisassemblyLines, buildGraphElements]);
+  }, [activeInstance, buildDisassemblyLines]);
 
   const handleFunctionSelect = useCallback((fcn: RzFunction) => {
 
@@ -469,8 +377,17 @@ export default function AnalysisPage() {
 
   const handleSeek = useCallback((address: number, view?: ActivePanel) => {
     setCurrentAddress(address);
+    const fn = findFunctionAt(address, functions);
+    if (fn) {
+      setSelectedFunction(fn.name);
+      void loadFunctionPresentation(fn.offset);
+    }
     if (view) setCurrentView(view);
-  }, [setCurrentAddress, setCurrentView]);
+  }, [functions, setCurrentAddress, setSelectedFunction, setCurrentView, loadFunctionPresentation]);
+
+  const handleSeekToCode = useCallback((address: number) => {
+    handleSeek(address, 'disasm');
+  }, [handleSeek]);
 
   const handleShowInHex = useCallback((vaddr: number) => {
     const offset = vaddrToOffset(vaddr, sections);
@@ -500,14 +417,7 @@ export default function AnalysisPage() {
     toast.success(comment ? 'Comment set' : 'Comment removed');
   }, [activeInstance, currentAddress, loadFunctionPresentation]);
 
-  // Seek to a function by address (call-graph node click) and show its disasm.
-  const handleFunctionSelectByAddress = useCallback((addr: number) => {
-    setCurrentAddress(addr);
-    const fn = functions.find((f) => f.offset === addr);
-    if (fn) setSelectedFunction(fn.name);
-    setCurrentView('disasm');
-    void loadFunctionPresentation(addr);
-  }, [functions, setCurrentAddress, setSelectedFunction, setCurrentView, loadFunctionPresentation]);
+  const handleFunctionSelectByAddress = handleSeekToCode;
 
   const handleRunCommand = useCallback((command: string) => {
     setPendingCommand(command);
@@ -635,6 +545,7 @@ export default function AnalysisPage() {
       setDisasmLines([]);
       setGraphNodes([]);
       setGraphEdges([]);
+      setGraphTruncated(false);
       setSelectedFunction(null);
       const seek = Number.parseInt(activeInstance.getCurrentAddress(), 16);
       if (!Number.isNaN(seek)) {
@@ -999,19 +910,19 @@ export default function AnalysisPage() {
               )}
               {currentView === 'decompiler' && activeInstance && <DecompilerView rizin={activeInstance} address={currentAddress} functionName={selectedFunction} />}
               {currentView === 'hex' && activeInstance && <HexView rizin={activeInstance} baseAddress={hexLayout.base} totalSize={hexLayout.size} writeMode={writeMode} onAfterWrite={() => setIsDirty(true)} />}
-              {currentView === 'strings' && <StringsView strings={strings} onSelect={(s) => setCurrentAddress(s.vaddr)} />}
-              {currentView === 'graph' && <GraphView nodes={graphNodes} edges={graphEdges} currentAddress={currentAddress} onSeek={setCurrentAddress} />}
-              {currentView === 'xrefs' && activeInstance && <XrefsView rizin={activeInstance} address={currentAddress} onSeek={setCurrentAddress} />}
-              {currentView === 'flags' && activeInstance && <FlagsView rizin={activeInstance} onSeek={setCurrentAddress} />}
-              {currentView === 'callgraph' && activeInstance && <CallGraphView rizin={activeInstance} onSeek={handleFunctionSelectByAddress} />}
+              {currentView === 'strings' && <StringsView strings={strings} onSelect={(s) => handleSeekToCode(s.vaddr)} />}
+              {currentView === 'graph' && <GraphView nodes={graphNodes} edges={graphEdges} currentAddress={currentAddress} onSeek={setCurrentAddress} truncated={graphTruncated} />}
+              {currentView === 'xrefs' && activeInstance && <XrefsView rizin={activeInstance} address={currentAddress} onSeek={handleSeekToCode} />}
+              {currentView === 'flags' && activeInstance && <FlagsView rizin={activeInstance} onSeek={handleSeekToCode} />}
+              {currentView === 'callgraph' && activeInstance && <CallGraphView rizin={activeInstance} address={currentAddress} onSeek={handleFunctionSelectByAddress} />}
               {currentView === 'scripts' && activeInstance && (
                 <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading editor...</div>}>
                   <ScriptsView rizin={activeInstance} />
                 </Suspense>
               )}
-              {currentView === 'imports' && <ImportsView imports={imports} onNavigate={setCurrentAddress} />}
-              {currentView === 'exports' && <ExportsView exports={exports} onNavigate={setCurrentAddress} />}
-              {currentView === 'sections' && <SectionsView sections={sections} onNavigate={setCurrentAddress} />}
+              {currentView === 'imports' && <ImportsView imports={imports} onNavigate={handleSeekToCode} />}
+              {currentView === 'exports' && <ExportsView exports={exports} onNavigate={handleSeekToCode} />}
+              {currentView === 'sections' && <SectionsView sections={sections} onNavigate={handleSeekToCode} />}
               {currentView === 'info' && <HeaderInfoPanel info={infoPayload} fileSize={currentFile?.size} />}
             </div>
           </Panel>

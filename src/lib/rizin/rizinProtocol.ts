@@ -50,8 +50,13 @@ export interface RizinCommandHelpEntry {
   args?: string;
 }
 
+export type XrefSource = 'aflj' | 'afx' | 'instruction' | 'empty';
+export type CallGraphMode = 'neighborhood' | 'global';
+
 export interface XrefEntry {
   addr: number;
+  from?: number;
+  to?: number;
   type: string;
   name?: string;
   opcode?: string;
@@ -60,6 +65,27 @@ export interface XrefEntry {
 export interface XrefsResult {
   to: XrefEntry[];
   from: XrefEntry[];
+  source: XrefSource;
+  error?: string;
+}
+
+export interface CallGraphNode {
+  id: string;
+  label: string;
+  offset?: number;
+}
+
+export interface CallGraphEdge {
+  source: string;
+  target: string;
+  type?: 'jump' | 'fail' | 'call';
+}
+
+export interface CallGraphResult {
+  nodes: CallGraphNode[];
+  edges: CallGraphEdge[];
+  truncated: boolean;
+  source: 'aflj' | 'agc' | 'agC' | 'agf' | 'empty';
 }
 
 export type RizinLoadPhase =
@@ -89,6 +115,7 @@ export type RizinRequest =
   | { id: number; method: 'getAutocomplete'; input: string; cursorPos: number; maxResults: number }
   | { id: number; method: 'readMemory'; address: number; size: number }
   | { id: number; method: 'getXrefs'; address: number }
+  | { id: number; method: 'getCallGraph'; address: number; mode: CallGraphMode }
   | { id: number; method: 'getDecompilation'; address: number }
   | { id: number; method: 'exportProject' }
   | { id: number; method: 'importProject'; data: Uint8Array }
@@ -112,6 +139,7 @@ export interface RizinResultMap {
   getAutocomplete: { result: RizinAutocompleteResult | null };
   readMemory: { bytes: Uint8Array };
   getXrefs: { xrefs: XrefsResult };
+  getCallGraph: { graph: CallGraphResult };
   getDecompilation: { code: string; pseudo: boolean };
   exportProject: { data: Uint8Array };
   importProject: {

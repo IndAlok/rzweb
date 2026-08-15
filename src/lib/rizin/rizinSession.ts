@@ -7,6 +7,8 @@ import {
 } from './analysisCache';
 import type {
   AnalysisData,
+  CallGraphMode,
+  CallGraphResult,
   FunctionDetailCacheEntry,
   RizinAutocompleteResult,
   RizinCommandHelpEntry,
@@ -19,6 +21,15 @@ import type {
   XrefsResult,
 } from './rizinProtocol';
 import { decodeProjectBundle, encodeProjectBundle } from './projectBundle';
+import { findFunctionAt, toNumber as parseNum, XREF_OPCODE_ENRICH_LIMIT, type FunctionLike } from './analysisModel';
+import { buildCallGraphFromAgc, buildCallGraphFromFunctions } from './graphs';
+import {
+  assembleFunctionXrefs,
+  assembleInstructionXrefs,
+  emptyXrefs,
+  enrichXrefNames,
+  xrefsFromFunctionRecord,
+} from './xrefs';
 
 interface CommandQueueItem {
   command: string;
@@ -2203,58 +2214,115 @@ export class RizinSession {
     return parseHexBytes(result.output);
   }
 
-  private static toNumber(value: unknown): number | null {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string' && value) {
-      const n = value.startsWith('0x') || value.startsWith('0X') ? parseInt(value, 16) : Number(value);
-      return Number.isFinite(n) ? n : null;
-    }
-    return null;
+  private finishXrefs(result: XrefsResult, functions: FunctionLike[]): XrefsResult {
+    return this.enrichXrefOpcodes(enrichXrefNames(result, functions));
   }
 
-  // Normalizes varied xref JSON item shapes into one list.
-  private normalizeXrefs(value: unknown, addrKeys: string[]): XrefEntry[] {
-    if (!Array.isArray(value)) return [];
-    const out: XrefEntry[] = [];
-    for (const item of value) {
-      if (!item || typeof item !== 'object') continue;
-      const rec = item as Record<string, unknown>;
-      let addr: number | null = null;
-      for (const key of addrKeys) {
-        addr = RizinSession.toNumber(rec[key]);
-        if (addr != null) break;
-      }
-      if (addr == null) continue;
-      const type = typeof rec.type === 'string' ? rec.type : '';
-      const name = [rec.fcn_name, rec.refname, rec.name, rec.flag, rec.realname].find(
-        (v): v is string => typeof v === 'string' && v.length > 0
-      );
-      const opcode = typeof rec.opcode === 'string' ? rec.opcode : undefined;
-      out.push({ addr, type, name, opcode });
+  private enrichXrefOpcodes(result: XrefsResult): XrefsResult {
+    const missing = [...result.to, ...result.from].filter((entry) => !entry.opcode).slice(0, XREF_OPCODE_ENRICH_LIMIT);
+    if (missing.length === 0) return result;
+
+    const opcodes = new Map<number, string>();
+    for (const entry of missing) {
+      const site = entry.from ?? entry.addr;
+      const raw = this.runSessionCommand(`pdj 1 @ 0x${site.toString(16)}`, {
+        context: 'metadata',
+        commandLabel: 'Xref opcode',
+        suppressNotice: true,
+        maxOutputBytes: 4096,
+      });
+      const parsed = this.parseJSON(raw.output);
+      const op = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (!op || typeof op !== 'object') continue;
+      const rec = op as Record<string, unknown>;
+      const text = typeof rec.opcode === 'string' ? rec.opcode : typeof rec.disasm === 'string' ? rec.disasm : undefined;
+      if (text) opcodes.set(entry.addr, text);
     }
-    return out;
+
+    const apply = (list: XrefEntry[]) =>
+      list.map((entry) => (entry.opcode ? entry : { ...entry, opcode: opcodes.get(entry.addr) }));
+    return { ...result, to: apply(result.to), from: apply(result.from) };
   }
 
-  // Cross-references for the function/address: who points here (to) and where it points (from).
+  // Function-level xrefs from aflj/afx when the seek is a function start;
+  // instruction-level axtj/axfj otherwise. Never dumps axl.
   getXrefs(address: number): XrefsResult {
-    if (!this._isOpen) return { to: [], from: [] };
-    const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
+    if (!this._isOpen) return emptyXrefs();
+    const functions = (this.analysisData?.functions ?? []) as FunctionLike[];
+    const fn = findFunctionAt(address, functions);
+    const atFunctionStart = fn != null && parseNum(fn.offset) === address;
 
+    if (atFunctionStart && fn) {
+      const fromAflj = xrefsFromFunctionRecord(fn, address);
+      if (fromAflj && (fromAflj.to.length > 0 || fromAflj.from.length > 0)) {
+        return this.finishXrefs(fromAflj, functions);
+      }
+
+      const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
+      const afxRaw = this.runSessionCommand(`s ${addr}; afxj`, {
+        context: 'metadata',
+        commandLabel: 'Function xrefs',
+        suppressNotice: true,
+      });
+      const assembled = assembleFunctionXrefs(this.parseJSON(afxRaw.output), address, fn);
+      if (assembled.to.length > 0 || assembled.from.length > 0) {
+        return this.finishXrefs(assembled, functions);
+      }
+    }
+
+    const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
     const toRaw = this.runSessionCommand(`axtj @ ${addr}`, {
       context: 'metadata',
       commandLabel: 'Xrefs to',
       suppressNotice: true,
     });
-    const to = this.normalizeXrefs(this.parseJSON(toRaw.output), ['from', 'at', 'addr']);
-
     const fromRaw = this.runSessionCommand(`axfj @ ${addr}`, {
       context: 'metadata',
       commandLabel: 'Xrefs from',
       suppressNotice: true,
     });
-    const from = this.normalizeXrefs(this.parseJSON(fromRaw.output), ['ref', 'to', 'addr']);
+    const instruction = assembleInstructionXrefs(
+      this.parseJSON(toRaw.output),
+      this.parseJSON(fromRaw.output),
+      address
+    );
+    if (instruction.to.length === 0 && instruction.from.length === 0) {
+      return emptyXrefs(
+        'instruction',
+        'No cross-references at this address. Run aa or aaa if analysis is still shallow.'
+      );
+    }
+    return this.finishXrefs(instruction, functions);
+  }
 
-    return { to, from };
+  // Neighborhood/global call graph from cached aflj refs. Falls back to
+  // function-local `agc json` only. Never runs unbounded `agC json`.
+  getCallGraph(address: number, mode: CallGraphMode): CallGraphResult {
+    if (!this._isOpen) {
+      return { nodes: [], edges: [], truncated: false, source: 'empty' };
+    }
+
+    const functions = (this.analysisData?.functions ?? []) as FunctionLike[];
+    const fromAflj = buildCallGraphFromFunctions(functions, address, { mode });
+    if (fromAflj.edges.length > 0 || fromAflj.nodes.length > 1) {
+      return fromAflj;
+    }
+
+    const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
+    const raw = this.runSessionCommand(`s ${addr}; agc json`, {
+      context: 'metadata',
+      commandLabel: 'Function callgraph',
+      suppressNotice: true,
+      maxOutputBytes: 2 * 1024 * 1024,
+    });
+    const parsed = buildCallGraphFromAgc(this.parseJSON(raw.output));
+    if (raw.truncated) {
+      return { ...parsed, truncated: true };
+    }
+    if (parsed.nodes.length > 0) {
+      return parsed;
+    }
+    return fromAflj;
   }
 
   // Renders the function at `address`. Uses a real decompiler plugin (pdg from

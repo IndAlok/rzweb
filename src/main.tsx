@@ -40,7 +40,7 @@ createRoot(container).render(
       <ThemeProvider defaultTheme="rizin-dark">
         <TooltipProvider>
           <ToastProvider>
-            <RouterProvider router={router} future={{ v7_startTransition: true }} />
+            <RouterProvider router={router} />
           </ToastProvider>
         </TooltipProvider>
       </ThemeProvider>

@@ -1,72 +1,37 @@
 import { useState, useEffect } from 'react';
 import { GraphView } from './GraphView';
-import type { RizinInstance } from '@/lib/rizin';
+import type { CallGraphMode, RizinInstance } from '@/lib/rizin';
+import type { GraphElements } from '@/lib/rizin/graphs';
+import { Button } from '@/components/ui';
 
 interface CallGraphViewProps {
   rizin: RizinInstance;
+  address: number;
   onSeek?: (address: number) => void;
   className?: string;
 }
 
-interface RawCallNode {
-  id?: number | string;
-  offset?: number;
-  addr?: number;
-  title?: string;
-  name?: string;
-  out_nodes?: Array<number | string>;
-}
-
-type GraphElements = {
-  nodes: { id: string; label: string; offset?: number }[];
-  edges: { source: string; target: string; type?: 'call' }[];
-};
-
-// `agC json` returns either a flat node array or a wrapper with a `nodes` array.
-function buildCallGraph(data: unknown): GraphElements {
-  let blocks: RawCallNode[] = [];
-  if (Array.isArray(data)) {
-    const first = data[0] as { nodes?: RawCallNode[] } | undefined;
-    blocks = Array.isArray(first?.nodes) ? first!.nodes! : (data as RawCallNode[]);
-  } else if (data && typeof data === 'object') {
-    blocks = ((data as { nodes?: RawCallNode[] }).nodes) ?? [];
-  }
-
-  const nodes = blocks.map((n, i) => ({
-    id: String(n.id ?? n.offset ?? i),
-    label: n.title ?? n.name ?? `0x${Number(n.offset ?? 0).toString(16)}`,
-    offset: typeof n.offset === 'number' ? n.offset : typeof n.addr === 'number' ? n.addr : undefined,
-  }));
-
-  const edges: GraphElements['edges'] = [];
-  for (const n of blocks) {
-    const source = String(n.id ?? n.offset ?? 0);
-    for (const target of Array.isArray(n.out_nodes) ? n.out_nodes : []) {
-      edges.push({ source, target: String(target), type: 'call' });
-    }
-  }
-  return { nodes, edges };
-}
-
-export function CallGraphView({ rizin, onSeek, className }: CallGraphViewProps) {
-  const [elements, setElements] = useState<GraphElements>({ nodes: [], edges: [] });
+export function CallGraphView({ rizin, address, onSeek, className }: CallGraphViewProps) {
+  const [elements, setElements] = useState<GraphElements>({ nodes: [], edges: [], truncated: false, source: 'empty' });
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<CallGraphMode>('neighborhood');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     rizin
-      .executeCommand('agC json')
-      .then((out) => {
+      .getCallGraph(address, mode)
+      .then((graph) => {
         if (cancelled) return;
-        try {
-          setElements(buildCallGraph(JSON.parse(out)));
-        } catch {
-          setElements({ nodes: [], edges: [] });
-        }
+        setElements({
+          nodes: graph.nodes,
+          edges: graph.edges,
+          truncated: graph.truncated,
+          source: graph.source,
+        });
       })
       .catch(() => {
-        if (!cancelled) setElements({ nodes: [], edges: [] });
+        if (!cancelled) setElements({ nodes: [], edges: [], truncated: false, source: 'empty' });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -74,10 +39,42 @@ export function CallGraphView({ rizin, onSeek, className }: CallGraphViewProps) 
     return () => {
       cancelled = true;
     };
-  }, [rizin]);
+  }, [rizin, address, mode]);
 
   if (loading) {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Building call graph...</div>;
   }
-  return <GraphView nodes={elements.nodes} edges={elements.edges} onSeek={onSeek} className={className} />;
+
+  return (
+    <div className="relative h-full w-full">
+      <div className="absolute top-4 right-4 z-10 flex gap-1 rounded-md border border-border bg-background/90 p-1 text-xs shadow-sm">
+        <Button
+          size="sm"
+          variant={mode === 'neighborhood' ? 'secondary' : 'ghost'}
+          className="h-7 px-2"
+          onClick={() => setMode('neighborhood')}
+        >
+          Neighborhood
+        </Button>
+        <Button
+          size="sm"
+          variant={mode === 'global' ? 'secondary' : 'ghost'}
+          className="h-7 px-2"
+          onClick={() => setMode('global')}
+        >
+          Global (capped)
+        </Button>
+      </div>
+      <GraphView
+        nodes={elements.nodes}
+        edges={elements.edges}
+        currentAddress={address}
+        onSeek={onSeek}
+        className={className}
+        variant="call"
+        truncated={elements.truncated}
+        emptyHint="Select a function to view callers and callees. The global program graph is never dumped in full."
+      />
+    </div>
+  );
 }

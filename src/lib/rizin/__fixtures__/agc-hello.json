@@ -1,0 +1,6 @@
+{
+  "nodes": [
+    { "id": 0, "title": "entry0", "offset": 1696, "out_nodes": [1] },
+    { "id": 1, "title": "reloc.__libc_start_main", "offset": 2101216, "out_nodes": [] }
+  ]
+}
