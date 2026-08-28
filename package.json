@@ -33,8 +33,8 @@
     "@radix-ui/react-tabs": "^1.1.21",
     "@radix-ui/react-toast": "^1.2.23",
     "@radix-ui/react-tooltip": "^1.2.16",
-    "@tanstack/react-query": "^5.101.4",
-    "@tanstack/react-virtual": "^3.14.9",
+    "@tanstack/react-query": "^5.102.3",
+    "@tanstack/react-virtual": "^3.14.10",
     "@xterm/addon-clipboard": "^0.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
@@ -62,9 +62,9 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/cytoscape": "^3.31.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.3.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.4",
     "eslint": "^9.39.5",
@@ -74,9 +74,9 @@
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.19",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0",
+    "typescript-eslint": "^8.68.0",
     "vite": "^7.3.6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "js-yaml": "4.3.1",
