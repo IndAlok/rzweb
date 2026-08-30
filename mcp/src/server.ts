@@ -22,12 +22,13 @@ export interface ServerOptions {
 
 export function createRzwebMcpServer(options: ServerOptions): McpServer {
   const { store, engine, allowWrite, allowRaw } = options;
-  const server = new McpServer({
-    name: 'rzweb',
-    version: '1.0.0',
-    instructions:
-      'RzWeb Context MCP. Open or create a context, then call analysis_start and wait. Read tools take context_id. Hosted deployments should keep write and raw command tools off.',
-  });
+  const server = new McpServer(
+    { name: 'rzweb', version: '1.0.0' },
+    {
+      instructions:
+        'RzWeb Context MCP. Open or create a context, then call analysis_start and wait. Read tools take context_id. Hosted deployments should keep write and raw command tools off.',
+    }
+  );
 
   const requireContext = async (contextId: string) => {
     const ctx = await store.get(contextId);
@@ -44,12 +45,11 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     await engine.openContext(contextId, ctx.name, artifact.data, rzdb);
   };
 
-  server.tool('context_list', 'List stored contexts', async () => jsonResult(await store.list()));
+  server.registerTool('context_list', { description: 'List stored contexts' }, async () => jsonResult(await store.list()));
 
-  server.tool(
+  server.registerTool(
     'context_get',
-    'Get one context by id',
-    { context_id: z.string() },
+    { description: 'Get one context by id', inputSchema: { context_id: z.string() } },
     async ({ context_id }) => {
       const ctx = await store.get(context_id);
       if (!ctx) return errorResult('not-found', 'Unknown context_id');
@@ -58,10 +58,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_create',
-    'Create a context from a local file path',
-    { path: z.string(), name: z.string().optional(), analysis_depth: z.number().optional() },
+    {
+      description: 'Create a context from a local file path',
+      inputSchema: { path: z.string(), name: z.string().optional(), analysis_depth: z.number().optional() },
+    },
     async ({ path: filePath, name, analysis_depth }) => {
       const data = new Uint8Array(await fs.readFile(filePath));
       const ctx = await store.createContext({
@@ -74,10 +76,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_import',
-    'Import an RZWEBPRJ bundle from a local path',
-    { path: z.string() },
+    { description: 'Import an RZWEBPRJ bundle from a local path', inputSchema: { path: z.string() } },
     async ({ path: filePath }) => {
       const data = new Uint8Array(await fs.readFile(filePath));
       const bundle = decodeBundle(data);
@@ -92,10 +93,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_checkpoint',
-    'Write a manual revision from the live core',
-    { context_id: z.string() },
+    { description: 'Write a manual revision from the live core', inputSchema: { context_id: z.string() } },
     async ({ context_id }) => {
       await ensureLive(context_id);
       const rzdb = engine.saveRzdb();
@@ -105,10 +105,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_restore_revision',
-    'Copy an older rzdb to current, then apply it onto the open file',
-    { context_id: z.string(), revision_id: z.string() },
+    {
+      description: 'Copy an older rzdb to current, then apply it onto the open file',
+      inputSchema: { context_id: z.string(), revision_id: z.string() },
+    },
     async ({ context_id, revision_id }) => {
       const rev = await store.restoreRevision(context_id, revision_id);
       if (!rev) return errorResult('not-found', 'Unknown revision');
@@ -121,17 +123,15 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_fork',
-    'Fork a context onto the same artifact',
-    { context_id: z.string(), name: z.string().optional() },
+    { description: 'Fork a context onto the same artifact', inputSchema: { context_id: z.string(), name: z.string().optional() } },
     async ({ context_id, name }) => jsonResult(await store.fork(context_id, name))
   );
 
-  server.tool(
+  server.registerTool(
     'context_close',
-    'Park the live core (save rzdb) and drop the WASM session',
-    { context_id: z.string() },
+    { description: 'Park the live core (save rzdb) and drop the WASM session', inputSchema: { context_id: z.string() } },
     async ({ context_id }) => {
       if (engine.currentContextId === context_id) {
         const rzdb = engine.saveRzdb();
@@ -143,10 +143,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'context_export_bundle',
-    'Write an RZWEBPRJ file to a local path',
-    { context_id: z.string(), path: z.string() },
+    { description: 'Write an RZWEBPRJ file to a local path', inputSchema: { context_id: z.string(), path: z.string() } },
     async ({ context_id, path: outPath }) => {
       const ctx = await requireContext(context_id);
       const artifact = await store.getArtifact(ctx.artifactHash);
@@ -160,10 +159,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'analysis_start',
-    'Run staged analysis (aa then aaa/aaaa). Returns after the job. This WASM isolate stays busy until it finishes.',
-    { context_id: z.string(), depth: z.number().optional() },
+    {
+      description: 'Run staged analysis (aa then aaa/aaaa). Returns after the job. This WASM isolate stays busy until it finishes.',
+      inputSchema: { context_id: z.string(), depth: z.number().optional() },
+    },
     async ({ context_id, depth }) => {
       await ensureLive(context_id);
       const ctx = await requireContext(context_id);
@@ -180,30 +181,33 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'analysis_status',
-    'Current job status for a context',
-    { context_id: z.string() },
+    { description: 'Current job status for a context', inputSchema: { context_id: z.string() } },
     async ({ context_id }) => {
       const ctx = await requireContext(context_id);
       return jsonResult({ context_id, job: ctx.job, live: engine.currentContextId === context_id });
     }
   );
 
-  server.tool(
+  server.registerTool(
     'analysis_cancel',
-    'Cancel is only possible between stages. Mid-aaa cannot be interrupted in this WASM build.',
-    { context_id: z.string() },
+    {
+      description: 'Cancel is only possible between stages. Mid-aaa cannot be interrupted in this WASM build.',
+      inputSchema: { context_id: z.string() },
+    },
     async () => errorResult(
       'cancel-unavailable',
       'Cancel only works between staged commands. This Node WASM path runs stages back to back in one tool call.'
     )
   );
 
-  server.tool(
+  server.registerTool(
     'list_functions',
-    'Paginated function list',
-    { context_id: z.string(), offset: z.number().optional(), limit: z.number().optional(), query: z.string().optional() },
+    {
+      description: 'Paginated function list',
+      inputSchema: { context_id: z.string(), offset: z.number().optional(), limit: z.number().optional(), query: z.string().optional() },
+    },
     async ({ context_id, offset, limit, query }) => {
       await ensureLive(context_id);
       const raw = (engine.cmdj('aflj') as Array<{ offset?: number; name?: string; size?: number; nbbs?: number }> | null) ?? [];
@@ -221,10 +225,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'list_strings',
-    'Paginated string list',
-    { context_id: z.string(), offset: z.number().optional(), limit: z.number().optional(), contains: z.string().optional() },
+    {
+      description: 'Paginated string list',
+      inputSchema: { context_id: z.string(), offset: z.number().optional(), limit: z.number().optional(), contains: z.string().optional() },
+    },
     async ({ context_id, offset, limit, contains }) => {
       await ensureLive(context_id);
       const raw = (engine.cmdj('izzj') as Array<{ vaddr?: number; string?: string; length?: number }> | null) ?? [];
@@ -239,10 +245,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'function_briefing',
-    'One-call function briefing: afij, xrefs, in-range strings, decompile with engine tag',
-    { context_id: z.string(), address: z.string() },
+    {
+      description: 'One-call function briefing: afij, xrefs, in-range strings, decompile with engine tag',
+      inputSchema: { context_id: z.string(), address: z.string() },
+    },
     async ({ context_id, address }) => {
       await ensureLive(context_id);
       const at = address.startsWith('0x') ? address : `0x${address}`;
@@ -267,10 +275,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'decompile',
-    'Decompile a function. engine is pdg, pdd, pdc, or pseudo.',
-    { context_id: z.string(), address: z.string() },
+    {
+      description: 'Decompile a function. engine is pdg, pdd, pdc, or pseudo.',
+      inputSchema: { context_id: z.string(), address: z.string() },
+    },
     async ({ context_id, address }) => {
       await ensureLive(context_id);
       const at = address.startsWith('0x') ? address : `0x${address}`;
@@ -278,10 +288,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'disasm',
-    'Disassemble a function (pdf)',
-    { context_id: z.string(), address: z.string() },
+    { description: 'Disassemble a function (pdf)', inputSchema: { context_id: z.string(), address: z.string() } },
     async ({ context_id, address }) => {
       await ensureLive(context_id);
       const at = address.startsWith('0x') ? address : `0x${address}`;
@@ -289,10 +298,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'xrefs',
-    'Cross references to and from an address',
-    { context_id: z.string(), address: z.string() },
+    { description: 'Cross references to and from an address', inputSchema: { context_id: z.string(), address: z.string() } },
     async ({ context_id, address }) => {
       await ensureLive(context_id);
       const at = address.startsWith('0x') ? address : `0x${address}`;
@@ -303,20 +311,21 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'binary_info',
-    'Binary info (ij)',
-    { context_id: z.string() },
+    { description: 'Binary info (ij)', inputSchema: { context_id: z.string() } },
     async ({ context_id }) => {
       await ensureLive(context_id);
       return jsonResult(engine.cmdj('ij'));
     }
   );
 
-  server.tool(
+  server.registerTool(
     'rename_function',
-    'Rename a function (afn). Disabled unless write tools are on.',
-    { context_id: z.string(), address: z.string(), name: z.string() },
+    {
+      description: 'Rename a function (afn). Disabled unless write tools are on.',
+      inputSchema: { context_id: z.string(), address: z.string(), name: z.string() },
+    },
     async ({ context_id, address, name }) => {
       if (!allowWrite) return errorResult('not-permitted', 'Write tools are off. Start with --allow-write.');
       await ensureLive(context_id);
@@ -326,10 +335,12 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'set_comment',
-    'Set or clear a comment. Disabled unless write tools are on.',
-    { context_id: z.string(), address: z.string(), text: z.string().optional() },
+    {
+      description: 'Set or clear a comment. Disabled unless write tools are on.',
+      inputSchema: { context_id: z.string(), address: z.string(), text: z.string().optional() },
+    },
     async ({ context_id, address, text }) => {
       if (!allowWrite) return errorResult('not-permitted', 'Write tools are off. Start with --allow-write.');
       await ensureLive(context_id);
@@ -339,10 +350,9 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'command',
-    'Raw rizin command. Off unless --allow-raw.',
-    { context_id: z.string(), command: z.string() },
+    { description: 'Raw rizin command. Off unless --allow-raw.', inputSchema: { context_id: z.string(), command: z.string() } },
     async ({ context_id, command }) => {
       if (!allowRaw) return errorResult('not-permitted', 'Raw command is off. Start with --allow-raw.');
       await ensureLive(context_id);
@@ -350,14 +360,17 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     }
   );
 
-  server.prompt('triage_binary', 'Guided first-pass triage of a context', { context_id: z.string() }, ({ context_id }) => ({
-    messages: [{ role: 'user', content: { type: 'text', text: TRIAGE_PROMPT.replaceAll('{context_id}', context_id) } }],
-  }));
+  server.registerPrompt(
+    'triage_binary',
+    { description: 'Guided first-pass triage of a context', argsSchema: { context_id: z.string() } },
+    ({ context_id }) => ({
+      messages: [{ role: 'user', content: { type: 'text', text: TRIAGE_PROMPT.replaceAll('{context_id}', context_id) } }],
+    })
+  );
 
-  server.prompt(
+  server.registerPrompt(
     'analyze_function',
-    'Analyze a specific function in a context',
-    { context_id: z.string(), address: z.string() },
+    { description: 'Analyze a specific function in a context', argsSchema: { context_id: z.string(), address: z.string() } },
     ({ context_id, address }) => ({
       messages: [{
         role: 'user',
@@ -369,9 +382,13 @@ export function createRzwebMcpServer(options: ServerOptions): McpServer {
     })
   );
 
-  server.prompt('find_vulnerabilities', 'Hunt for common vulnerability patterns', { context_id: z.string() }, ({ context_id }) => ({
-    messages: [{ role: 'user', content: { type: 'text', text: FIND_VULNS_PROMPT.replaceAll('{context_id}', context_id) } }],
-  }));
+  server.registerPrompt(
+    'find_vulnerabilities',
+    { description: 'Hunt for common vulnerability patterns', argsSchema: { context_id: z.string() } },
+    ({ context_id }) => ({
+      messages: [{ role: 'user', content: { type: 'text', text: FIND_VULNS_PROMPT.replaceAll('{context_id}', context_id) } }],
+    })
+  );
 
   return server;
 }

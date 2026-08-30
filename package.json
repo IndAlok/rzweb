@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint src",
+    "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "postinstall": "node scripts/postinstall.cjs"
@@ -61,7 +61,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@types/cytoscape": "^3.31.0",
     "@types/node": "^26.3.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",

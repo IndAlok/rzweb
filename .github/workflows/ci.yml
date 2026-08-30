@@ -54,3 +54,41 @@ jobs:
           name: dist
           path: dist/
           retention-days: 7
+
+  mcp:
+    name: Local MCP typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: mcp
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: mcp
+
+  hosted:
+    name: Hosted Worker typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: hosted/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: hosted
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: hosted

@@ -38,9 +38,16 @@ export function ScriptsView({ rizin, className }: ScriptsViewProps) {
 
   const language = languageOf(name || '.rz');
 
-  // Stable refs so editor keybindings always call the latest handlers.
   const runRef = useRef<() => void>(() => {});
   const saveRef = useRef<() => void>(() => {});
+  const resolvedThemeRef = useRef(resolvedTheme);
+  const rizinRef = useRef(rizin);
+  const minCharsRef = useRef(terminalAutocompleteMinChars);
+  const maxResultsRef = useRef(terminalAutocompleteMaxResults);
+  resolvedThemeRef.current = resolvedTheme;
+  rizinRef.current = rizin;
+  minCharsRef.current = terminalAutocompleteMinChars;
+  maxResultsRef.current = terminalAutocompleteMaxResults;
 
   const getSource = useCallback(() => viewRef.current?.state.doc.toString() ?? '', []);
 
@@ -50,10 +57,9 @@ export function ScriptsView({ rizin, className }: ScriptsViewProps) {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
   }, []);
 
-  // Create the editor once.
   useEffect(() => {
     if (!editorParentRef.current) return;
-    const dark = resolvedTheme === 'dark';
+    const dark = resolvedThemeRef.current === 'dark';
     const state = EditorState.create({
       doc: '# One rizin command per line. Lines starting with # are comments.\nafl\npdf @ main',
       extensions: [
@@ -66,8 +72,8 @@ export function ScriptsView({ rizin, className }: ScriptsViewProps) {
         langCompartment.current.of(languageExtension('rz')),
         completionCompartment.current.of(
           autocompletion({
-            override: [completionSource('rz', rizin.getCommandCatalog(), terminalAutocompleteMinChars)],
-            maxRenderedOptions: terminalAutocompleteMaxResults,
+            override: [completionSource('rz', rizinRef.current.getCommandCatalog(), minCharsRef.current)],
+            maxRenderedOptions: maxResultsRef.current,
           })
         ),
         themeCompartment.current.of(editorTheme(dark)),
