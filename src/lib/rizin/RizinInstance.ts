@@ -19,6 +19,7 @@ import type {
   CallGraphResult,
   XrefsResult,
 } from './rizinProtocol';
+import type { AnalysisJob, DecompilerEngine, FunctionBriefing, FunctionSummary, Paginated } from '../context/types';
 
 export type {
   AnalysisData,
@@ -55,10 +56,13 @@ export class RizinInstance {
   private lastStderr = '';
   private _writeMode = false;
   private _isDirty = false;
+  private _job: AnalysisJob | null = null;
+  private _hasApplyProject = false;
 
   private noticeCallbacks: Array<(notice: RizinNotice) => void> = [];
   private analysisCallbacks: Array<() => void> = [];
   private stateCallbacks: Array<() => void> = [];
+  private jobCallbacks: Array<(job: AnalysisJob) => void> = [];
 
   constructor(worker: Worker) {
     this.worker = worker;
@@ -84,6 +88,14 @@ export class RizinInstance {
 
   get isDirty(): boolean {
     return this._isDirty;
+  }
+
+  get job(): AnalysisJob | null {
+    return this._job;
+  }
+
+  get hasApplyProject(): boolean {
+    return this._hasApplyProject;
   }
 
   get allNotices(): RizinNotice[] {
@@ -135,9 +147,9 @@ export class RizinInstance {
     return result.graph;
   }
 
-  async getDecompilation(address: number): Promise<{ code: string; pseudo: boolean }> {
+  async getDecompilation(address: number): Promise<{ code: string; pseudo: boolean; engine: DecompilerEngine }> {
     const result = await this.send<'getDecompilation'>({ id: ++this.nextId, method: 'getDecompilation', address });
-    return { code: result.code, pseudo: result.pseudo };
+    return { code: result.code, pseudo: result.pseudo, engine: result.engine };
   }
 
   async exportProject(): Promise<Uint8Array> {
@@ -178,6 +190,36 @@ export class RizinInstance {
     return this.send<'runScript'>({ id: ++this.nextId, method: 'runScript', source, language });
   }
 
+  async startAnalysis(): Promise<AnalysisJob | null> {
+    const result = await this.send<'startAnalysis'>({ id: ++this.nextId, method: 'startAnalysis' });
+    this._job = result.job;
+    return result.job;
+  }
+
+  async cancelAnalysis(): Promise<AnalysisJob | null> {
+    const result = await this.send<'cancelAnalysis'>({ id: ++this.nextId, method: 'cancelAnalysis' });
+    this._job = result.job;
+    return result.job;
+  }
+
+  async listFunctions(offset = 0, limit = 100, query?: string): Promise<Paginated<FunctionSummary>> {
+    return this.send<'listFunctions'>({ id: ++this.nextId, method: 'listFunctions', offset, limit, query });
+  }
+
+  async listStrings(offset = 0, limit = 100, contains?: string): Promise<Paginated<{ addr: number; string: string; length?: number }>> {
+    return this.send<'listStrings'>({ id: ++this.nextId, method: 'listStrings', offset, limit, contains });
+  }
+
+  async functionBriefing(address: number): Promise<FunctionBriefing> {
+    const result = await this.send<'functionBriefing'>({ id: ++this.nextId, method: 'functionBriefing', address });
+    return result.briefing;
+  }
+
+  async checkpoint(): Promise<boolean> {
+    const result = await this.send<'checkpoint'>({ id: ++this.nextId, method: 'checkpoint' });
+    return result.ok;
+  }
+
   getCommandCatalog(): Record<string, RizinCommandHelpEntry> {
     return this.commandCatalog;
   }
@@ -209,6 +251,13 @@ export class RizinInstance {
     this.stateCallbacks.push(callback);
     return () => {
       this.stateCallbacks = this.stateCallbacks.filter(cb => cb !== callback);
+    };
+  }
+
+  onJob(callback: (job: AnalysisJob) => void): () => void {
+    this.jobCallbacks.push(callback);
+    return () => {
+      this.jobCallbacks = this.jobCallbacks.filter(cb => cb !== callback);
     };
   }
 
@@ -262,6 +311,11 @@ export class RizinInstance {
         this.applyState(event.state);
         this.analysisCallbacks.forEach(cb => cb());
         break;
+      case 'job':
+        this._job = event.job;
+        this.jobCallbacks.forEach(cb => cb(event.job));
+        this.stateCallbacks.forEach(cb => cb());
+        break;
       default:
         break;
     }
@@ -274,6 +328,8 @@ export class RizinInstance {
     this.lastStderr = state.lastStderr;
     this._writeMode = state.writeMode;
     this._isDirty = state.isDirty;
+    this._job = state.job;
+    this._hasApplyProject = state.hasApplyProject;
     this.stateCallbacks.forEach(cb => cb());
   }
 
@@ -286,5 +342,6 @@ export class RizinInstance {
     this.noticeCallbacks = [];
     this.analysisCallbacks = [];
     this.stateCallbacks = [];
+    this.jobCallbacks = [];
   }
 }

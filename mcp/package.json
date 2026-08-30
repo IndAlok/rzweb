@@ -1,0 +1,26 @@
+{
+  "name": "rzweb-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local MCP server for RzWeb contexts using rizin.wasm",
+  "bin": {
+    "rzweb-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http 8788"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
