@@ -34,6 +34,53 @@ updates:
     labels:
       - dependencies
 
+  - package-ecosystem: npm
+    directory: /mcp
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+      security:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    labels:
+      - dependencies
+
+  - package-ecosystem: npm
+    directory: /hosted
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      wrangler-and-types:
+        applies-to: version-updates
+        patterns:
+          - wrangler
+          - "@cloudflare/workers-types"
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+      security:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    labels:
+      - dependencies
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
