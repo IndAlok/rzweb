@@ -93,6 +93,10 @@ const RZ_API: Completion[] = [
   { label: 'rz.callj', type: 'method', detail: '(cmd)', info: 'Like cmdj, using call' },
   { label: 'rz.cmdAt', type: 'method', detail: '(cmd, at)', info: 'Run a command at an address' },
   { label: 'rz.log', type: 'method', detail: '(...args)', info: 'Print to the output console' },
+  { label: 'rz.listFunctions', type: 'method', detail: '(offset, limit, query)', info: 'Paginated function list' },
+  { label: 'rz.listStrings', type: 'method', detail: '(offset, limit, contains)', info: 'Paginated string list' },
+  { label: 'rz.functionBriefing', type: 'method', detail: '(address)', info: 'Compact function briefing' },
+  { label: 'rz.decompile', type: 'method', detail: '(address)', info: 'Decompile with engine tag' },
 ];
 
 function jsCompletion(context: CompletionContext): CompletionResult | null {

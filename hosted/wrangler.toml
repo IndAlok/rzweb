@@ -1,0 +1,15 @@
+name = "rzweb-hosted-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "rzweb-contexts"
+
+[vars]
+# Set ENGINE_URL to the Container running native rizin-mcp.
+# This Worker must not run aaa.
+ENGINE_URL = ""
+
+# Optional shared secret until you wire OAuth.
+# MCP_API_KEY = ""

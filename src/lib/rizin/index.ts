@@ -1,4 +1,4 @@
-export { loadRizinModule, getCachedVersions, clearCache } from './RizinLoader';
+export { loadRizinModule, createRizinWorker, destroyRizinWorker, getCachedVersions, clearCache } from './RizinLoader';
 export { RizinInstance } from './RizinInstance';
 export type {
   RizinFile,
@@ -28,3 +28,27 @@ export type { ProjectBundle } from './projectBundle';
 export { findFunctionAt } from './analysisModel';
 export { buildCfgElements, buildCallGraphFromFunctions, buildCallGraphFromAgc } from './graphs';
 export type { GraphElements } from './graphs';
+export {
+  listContexts,
+  listContextsForHash,
+  getContext,
+  createContext,
+  updateContext,
+  deleteContext,
+  commitRevision,
+  listRevisions,
+  listRevisionMeta,
+  getRevision,
+  getCurrentRzdb,
+  getArtifact,
+  restoreRevision,
+  forkContext,
+} from './contextStore';
+export type {
+  AnalysisJob,
+  ContextRevision,
+  FunctionBriefing,
+  FunctionSummary,
+  Paginated,
+  RzwebContext,
+} from '../context/types';

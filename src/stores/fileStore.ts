@@ -8,6 +8,7 @@ export interface LoadedFile {
   size: number;
   loadedAt: number;
   path?: string;
+  artifactHash?: string;
   // AnalysisPage hands this to RizinInstance.open().
   projectData?: Uint8Array;
 }

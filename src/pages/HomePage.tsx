@@ -6,49 +6,100 @@ import { Button } from '@/components/ui';
 import { FileDropZone } from '@/components/file';
 import { formatSize } from '@/lib/utils/format';
 import { getRizinVersion } from '@/lib/utils/version';
-import { getCachedAnalysisEntry, listCachedAnalyses, decodeProjectBundle, type CachedAnalysisSummary } from '@/lib/rizin';
-import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2, FolderOpen } from 'lucide-react';
+import {
+  computeFileHash,
+  createContext,
+  decodeProjectBundle,
+  deleteContext,
+  getArtifact,
+  getCurrentRzdb,
+  listContexts,
+  listContextsForHash,
+  type RzwebContext,
+} from '@/lib/rizin';
+import { Github, Moon, Sun, Terminal, Cpu, Lock, Code2, FolderOpen, Trash2 } from 'lucide-react';
 import { useTheme } from '@/providers';
+
+interface PendingLaunch {
+  name: string;
+  data: Uint8Array;
+  size: number;
+  hash: string;
+  existing: RzwebContext[];
+}
 
 export default function HomePage() {
   const navigate = useNavigate();
   const { setCurrentFile, recentFiles } = useFileStore();
-  const { cacheVersions, setCacheVersions } = useSettingsStore();
+  const { cacheVersions, setCacheVersions, analysisDepth } = useSettingsStore();
   const { setTheme, resolvedTheme } = useTheme();
 
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [openingCachedHash, setOpeningCachedHash] = useState<string | null>(null);
+  const [openingContextId, setOpeningContextId] = useState<string | null>(null);
   const [rizinVersion, setRizinVersion] = useState('...');
-  const [cachedEntries, setCachedEntries] = useState<CachedAnalysisSummary[]>([]);
+  const [contexts, setContexts] = useState<RzwebContext[]>([]);
+  const [pendingLaunch, setPendingLaunch] = useState<PendingLaunch | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+
+  const refreshLibrary = useCallback(() => {
+    void listContexts().then(setContexts);
+  }, []);
 
   useEffect(() => {
     getRizinVersion().then(setRizinVersion);
-    listCachedAnalyses().then(setCachedEntries);
-  }, []);
+    refreshLibrary();
+  }, [refreshLibrary]);
 
   const handleFileSelect = useCallback((nextFile: File) => {
     setFile(nextFile);
+    setPendingLaunch(null);
   }, []);
 
-  const launchBinary = useCallback((params: {
+  const launchContext = useCallback((params: {
+    id: string;
     name: string;
     data: Uint8Array;
     size: number;
-    useCache: boolean;
     projectData?: Uint8Array;
+    artifactHash?: string;
   }) => {
     setCurrentFile({
-      id: crypto.randomUUID(),
+      id: params.id,
       name: params.name,
       data: params.data,
       size: params.size,
       loadedAt: Date.now(),
       projectData: params.projectData,
+      artifactHash: params.artifactHash,
     });
-    navigate(`/analyze?cache=${params.useCache}`);
-  }, [navigate, setCurrentFile]);
+    navigate(`/analyze?cache=${cacheVersions}`);
+  }, [navigate, setCurrentFile, cacheVersions]);
+
+  const resumeContext = useCallback(async (ctx: RzwebContext, data?: Uint8Array) => {
+    setOpeningContextId(ctx.id);
+    try {
+      const artifact = data ? { data, fileSize: data.byteLength } : await getArtifact(ctx.artifactHash);
+      if (!artifact) {
+        toast.error('The binary for this context is no longer stored.');
+        refreshLibrary();
+        return;
+      }
+      const rzdb = await getCurrentRzdb(ctx.id);
+      launchContext({
+        id: ctx.id,
+        name: ctx.name,
+        data: artifact.data,
+        size: artifact.fileSize,
+        projectData: rzdb,
+        artifactHash: ctx.artifactHash,
+      });
+    } catch {
+      toast.error('Unable to reopen that context.');
+    } finally {
+      setOpeningContextId(null);
+    }
+  }, [launchContext, refreshLibrary]);
 
   const handleOpenProjectClick = useCallback(() => {
     projectInputRef.current?.click();
@@ -63,67 +114,94 @@ export default function HomePage() {
       const bytes = new Uint8Array(await projectFile.arrayBuffer());
       const bundle = decodeProjectBundle(bytes);
       if (!bundle) {
-        toast.error('A raw Rizin project needs its binary: open the binary first, then load the project from the workspace.');
+        toast.error('A raw Rizin project needs its binary. Open the binary first, then load the project from the workspace.');
         return;
       }
-      launchBinary({
+      const ctx = await createContext({
         name: bundle.name,
         data: bundle.binary,
+        analysisDepth,
+        rzdb: bundle.rzdb,
+      });
+      launchContext({
+        id: ctx.id,
+        name: ctx.name,
+        data: bundle.binary,
         size: bundle.binary.byteLength,
-        useCache: cacheVersions,
         projectData: bundle.rzdb,
+        artifactHash: ctx.artifactHash,
       });
     } catch {
       toast.error('Unable to open the selected project file.');
     }
-  }, [cacheVersions, launchBinary]);
+  }, [analysisDepth, launchContext]);
 
   const handleOpenRizin = useCallback(async () => {
     if (!file) return;
 
     setIsProcessing(true);
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      launchBinary({
-        name: file.name,
-        data: new Uint8Array(arrayBuffer),
+      const data = new Uint8Array(await file.arrayBuffer());
+      const hash = await computeFileHash(data);
+      const existing = await listContextsForHash(hash);
+      if (existing.length > 0) {
+        setPendingLaunch({ name: file.name, data, size: file.size, hash, existing });
+        return;
+      }
+      const ctx = await createContext({ name: file.name, data, analysisDepth });
+      launchContext({
+        id: ctx.id,
+        name: ctx.name,
+        data,
         size: file.size,
-        useCache: cacheVersions,
+        artifactHash: ctx.artifactHash,
       });
     } catch {
       toast.error('Unable to open the selected binary.');
     } finally {
       setIsProcessing(false);
     }
-  }, [cacheVersions, file, launchBinary]);
+  }, [analysisDepth, file, launchContext]);
 
-  const handleOpenCachedBinary = useCallback(async (hash: string) => {
-    setOpeningCachedHash(hash);
+  const handleResumeLatest = useCallback(() => {
+    if (!pendingLaunch) return;
+    void resumeContext(pendingLaunch.existing[0], pendingLaunch.data);
+  }, [pendingLaunch, resumeContext]);
+
+  const handleCreateNewContext = useCallback(async () => {
+    if (!pendingLaunch) return;
+    setIsProcessing(true);
     try {
-      const cached = await getCachedAnalysisEntry(hash);
-      if (!cached) {
-        toast.error('That cached analysis is no longer available.');
-        setCachedEntries(await listCachedAnalyses());
-        return;
-      }
-
-      if (!(cached.binaryData instanceof Uint8Array) || cached.binaryData.byteLength === 0) {
-        toast.error('This cache entry stores metadata only. Re-analyze the binary to reopen it directly from Home.');
-        return;
-      }
-
-      launchBinary({
-        name: cached.fileName,
-        data: new Uint8Array(cached.binaryData),
-        size: cached.fileSize,
-        useCache: true,
+      const ctx = await createContext({
+        name: pendingLaunch.name,
+        data: pendingLaunch.data,
+        analysisDepth,
+      });
+      launchContext({
+        id: ctx.id,
+        name: ctx.name,
+        data: pendingLaunch.data,
+        size: pendingLaunch.size,
+        artifactHash: ctx.artifactHash,
       });
     } catch {
-      toast.error('Unable to reopen the cached binary right now.');
+      toast.error('Unable to create a new context.');
     } finally {
-      setOpeningCachedHash(null);
+      setIsProcessing(false);
     }
-  }, [launchBinary]);
+  }, [analysisDepth, launchContext, pendingLaunch]);
+
+  const handleDeleteContext = useCallback(async (id: string) => {
+    if (!window.confirm('Delete this context and its snapshots? The binary stays if another context still uses it.')) {
+      return;
+    }
+    try {
+      await deleteContext(id);
+      refreshLibrary();
+    } catch {
+      toast.error('Unable to delete that context.');
+    }
+  }, [refreshLibrary]);
 
   const formatHash = useCallback((hash: string) => `${hash.slice(0, 12)}...${hash.slice(-6)}`, []);
 
@@ -171,8 +249,7 @@ export default function HomePage() {
               Browser-Based Reverse Engineering
             </p>
             <p className="mx-auto mt-2 max-w-md text-xs font-mono text-muted-foreground">
-              Analyze binaries directly in your browser. No uploads, no servers.
-              Powered by Rizin compiled to WebAssembly.
+              Analyze binaries in your browser. Files stay on this device unless you use hosted MCP.
             </p>
           </div>
 
@@ -180,8 +257,27 @@ export default function HomePage() {
             <FileDropZone
               onFileSelect={handleFileSelect}
               selectedFile={file}
-              onClear={() => setFile(null)}
+              onClear={() => { setFile(null); setPendingLaunch(null); }}
             />
+
+            {pendingLaunch && (
+              <div className="mt-4 rounded border border-amber-500/40 bg-amber-500/10 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  This binary already has {pendingLaunch.existing.length === 1 ? 'a context' : `${pendingLaunch.existing.length} contexts`}.
+                </p>
+                <p className="mt-1 text-[10px] font-mono text-muted-foreground">
+                  Resume keeps names, comments, and analysis. New context starts a separate history.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={handleResumeLatest} loading={openingContextId === pendingLaunch.existing[0]?.id}>
+                    Resume {pendingLaunch.existing[0]?.name}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void handleCreateNewContext()} loading={isProcessing}>
+                    New context
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
               <label className="flex cursor-pointer items-center gap-2 text-xs font-mono text-muted-foreground">
@@ -197,18 +293,18 @@ export default function HomePage() {
                 <input
                   ref={projectInputRef}
                   type="file"
-                  accept=".rzdb,application/octet-stream"
+                  accept=".rzdb,.rzwebprj,application/octet-stream"
                   className="hidden"
                   onChange={handleProjectFileSelected}
                 />
-                <Button variant="outline" onClick={handleOpenProjectClick} title="Open a saved RzWeb project (.rzdb)">
+                <Button variant="outline" onClick={handleOpenProjectClick} title="Open a saved RzWeb project">
                   <FolderOpen className="mr-1.5 h-4 w-4" />
                   Open Project
                 </Button>
                 <Button
                   onClick={handleOpenRizin}
                   disabled={!file || isProcessing}
-                  loading={isProcessing}
+                  loading={isProcessing && !pendingLaunch}
                 >
                   Analyze
                 </Button>
@@ -223,7 +319,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-center justify-center gap-2 rounded border border-border/50 bg-card/40 px-3 py-2 text-xs font-mono text-muted-foreground sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
               <Lock className="h-4 w-4 text-primary" />
-              <span>100% Private</span>
+              <span>Local by default</span>
             </div>
             <div className="flex items-center justify-center gap-2 rounded border border-border/50 bg-card/40 px-3 py-2 text-xs font-mono text-muted-foreground sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
               <Code2 className="h-4 w-4 text-primary" />
@@ -231,37 +327,45 @@ export default function HomePage() {
             </div>
           </div>
 
-          {cachedEntries.length > 0 && (
+          {contexts.length > 0 && (
             <div className="mt-6 rounded border border-border bg-card/50 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-[10px] font-mono text-muted-foreground">OFFLINE CACHE:</p>
+                <p className="text-[10px] font-mono text-muted-foreground">CONTEXTS:</p>
                 <p className="text-[10px] font-mono text-muted-foreground">
-                  Click a cached filename to reopen instantly
+                  Click a name to resume
                 </p>
               </div>
               <div className="space-y-2">
-                {cachedEntries.slice(0, 5).map((entry) => {
-                  const isOpening = openingCachedHash === entry.hash;
+                {contexts.slice(0, 8).map((ctx) => {
+                  const isOpening = openingContextId === ctx.id;
                   return (
-                    <button
-                      key={entry.hash}
-                      type="button"
-                      onClick={() => void handleOpenCachedBinary(entry.hash)}
-                      disabled={!entry.hasBinaryData || isOpening}
-                      className="flex w-full items-center justify-between gap-3 rounded border border-border/60 bg-background/40 px-3 py-2 text-left transition hover:border-primary/40 hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+                    <div
+                      key={ctx.id}
+                      className="flex w-full items-center gap-2 rounded border border-border/60 bg-background/40 px-3 py-2"
                     >
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-mono text-foreground">{entry.fileName}</div>
+                      <button
+                        type="button"
+                        onClick={() => void resumeContext(ctx)}
+                        disabled={isOpening}
+                        className="min-w-0 flex-1 text-left transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <div className="truncate text-xs font-mono text-foreground">{ctx.name}</div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                          <span>{formatSize(entry.fileSize)}</span>
-                          <span>{formatHash(entry.hash)}</span>
-                          <span>{entry.hasBinaryData ? 'launchable' : 'metadata only'}</span>
+                          <span>{formatSize(ctx.fileSize)}</span>
+                          <span>{formatHash(ctx.artifactHash)}</span>
+                          <span>{ctx.job}</span>
+                          <span>{new Date(ctx.updatedAt).toLocaleDateString()}</span>
                         </div>
-                      </div>
-                      <div className="shrink-0 text-[10px] font-mono text-primary">
-                        {isOpening ? 'Opening...' : entry.hasBinaryData ? 'Open' : 'Rebuild'}
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteContext(ctx.id)}
+                        className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
+                        title="Delete context"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>

@@ -43,6 +43,7 @@ function notifyProgress(phase: RizinLoadPhase, progress: number, message: string
 }
 
 let session: RizinSession | null = null;
+let rpcChain: Promise<void> = Promise.resolve();
 
 function charsToString(buffer: number[]): string {
   if (buffer.length <= CHUNK_SIZE) {
@@ -197,6 +198,18 @@ async function dispatch(active: RizinSession, request: RizinRequest): Promise<Ri
       return await active.exportBinary();
     case 'runScript':
       return active.runScript(request.source, request.language);
+    case 'startAnalysis':
+      return { job: await active.startAnalysisJob() };
+    case 'cancelAnalysis':
+      return { job: active.cancelAnalysisJob() };
+    case 'listFunctions':
+      return active.listFunctions({ offset: request.offset, limit: request.limit, query: request.query });
+    case 'listStrings':
+      return active.listStrings({ offset: request.offset, limit: request.limit, contains: request.contains });
+    case 'functionBriefing':
+      return { briefing: await active.functionBriefing(request.address) };
+    case 'checkpoint':
+      return { ok: await active.checkpoint() };
     case 'close':
       await active.close();
       return {};
@@ -213,7 +226,13 @@ async function handleRequest(request: RizinRequest): Promise<void> {
     const result = await dispatch(session, request);
     post({ id: request.id, ok: true, result, state: session.snapshot() });
   } catch (error) {
-    post({ id: request.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+    const message = error instanceof Error ? error.message : String(error);
+    post({
+      id: request.id,
+      ok: false,
+      error: message,
+      errorInfo: { code: 'rpc-error', message },
+    });
   }
 }
 
@@ -228,5 +247,5 @@ ctx.addEventListener('message', event => {
     if (message.control === 'init') init();
     return;
   }
-  void handleRequest(message);
+  rpcChain = rpcChain.then(() => handleRequest(message)).catch(() => undefined);
 });

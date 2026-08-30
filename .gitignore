@@ -5,3 +5,4 @@ dist/
 .vercel
 public/rizin.js
 public/coi-serviceworker.min.js
+.agents/mcp_config.json

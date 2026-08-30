@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rzweb.local/context/schema.json",
+  "title": "RzWeb Context contract",
+  "type": "object",
+  "properties": {
+    "context": {
+      "type": "object",
+      "required": ["id", "name", "artifactHash", "currentRevisionId", "job", "analysisDepth", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "artifactHash": { "type": "string" },
+        "fileSize": { "type": "integer" },
+        "currentRevisionId": { "type": ["string", "null"] },
+        "job": { "enum": ["idle", "analyzing", "failed"] },
+        "analysisDepth": { "type": "integer" },
+        "createdAt": { "type": "integer" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": ["id", "contextId", "parentId", "reason", "createdAt"],
+      "properties": {
+        "id": { "type": "string" },
+        "contextId": { "type": "string" },
+        "parentId": { "type": ["string", "null"] },
+        "reason": { "enum": ["open", "analysis", "edits", "manual", "park"] },
+        "createdAt": { "type": "integer" }
+      }
+    },
+    "job": {
+      "type": "object",
+      "required": ["id", "contextId", "phase", "progress", "message", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "contextId": { "type": "string" },
+        "phase": { "type": "string" },
+        "progress": { "type": "number" },
+        "message": { "type": "string" },
+        "status": { "enum": ["idle", "analyzing", "failed"] }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

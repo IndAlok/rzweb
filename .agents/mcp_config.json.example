@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rzweb": {
+      "command": "node",
+      "args": ["/absolute/path/to/rzweb/mcp/dist/index.js"],
+      "env": {
+        "RZWEB_WASM_DIR": "/absolute/path/to/rzwasi-dist"
+      }
+    }
+  }
+}

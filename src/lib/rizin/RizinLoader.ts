@@ -1,4 +1,3 @@
-
 import RizinWorker from './rizin.worker.ts?worker';
 import type { RizinControl, RizinOutbound } from './rizinProtocol';
 
@@ -34,27 +33,18 @@ export interface LoadProgress {
 
 export type ProgressCallback = (progress: LoadProgress) => void;
 
-let worker: Worker | null = null;
-let ready = false;
-let loadingPromise: Promise<Worker> | null = null;
+export function destroyRizinWorker(worker: Worker | null | undefined): void {
+  worker?.terminate();
+}
 
-export async function loadRizinModule(
+export async function createRizinWorker(
   options: {
     onProgress?: ProgressCallback;
   } = {}
 ): Promise<Worker> {
   const { onProgress } = options;
 
-  if (ready && worker) {
-    onProgress?.({ phase: 'ready', progress: 100, message: 'Rizin loaded from cache' });
-    return worker;
-  }
-
-  if (loadingPromise) {
-    return loadingPromise;
-  }
-
-  loadingPromise = new Promise<Worker>((resolve, reject) => {
+  return new Promise<Worker>((resolve, reject) => {
     const w = new RizinWorker();
 
     const cleanup = () => {
@@ -65,9 +55,6 @@ export async function loadRizinModule(
     const fail = (message: string) => {
       cleanup();
       w.terminate();
-      worker = null;
-      ready = false;
-      loadingPromise = null;
       reject(new Error(message));
     };
 
@@ -79,8 +66,6 @@ export async function loadRizinModule(
         if (data.phase === 'error') fail(data.message);
       } else if (data.event === 'ready') {
         cleanup();
-        worker = w;
-        ready = true;
         resolve(w);
       }
     };
@@ -96,17 +81,20 @@ export async function loadRizinModule(
     const init: RizinControl = { control: 'init' };
     w.postMessage(init);
   });
+}
 
-  return loadingPromise;
+export async function loadRizinModule(
+  options: {
+    onProgress?: ProgressCallback;
+  } = {}
+): Promise<Worker> {
+  return createRizinWorker(options);
 }
 
 export async function getCachedVersions(): Promise<string[]> {
-  return ready ? ['nightly'] : [];
+  return ['nightly'];
 }
 
 export async function clearCache(): Promise<void> {
-  worker?.terminate();
-  worker = null;
-  ready = false;
-  loadingPromise = null;
+  // Callers own workers and must terminate them. Kept for API compatibility.
 }

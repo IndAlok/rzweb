@@ -48,6 +48,7 @@ function highlightLine(line: string, lineKey: number): ReactNode[] {
 export function DecompilerView({ rizin, address, functionName, className }: DecompilerViewProps) {
   const [code, setCode] = useState('');
   const [pseudo, setPseudo] = useState(false);
+  const [engine, setEngine] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const requestRef = useRef(0);
@@ -66,6 +67,7 @@ export function DecompilerView({ rizin, address, functionName, className }: Deco
         if (requestId !== requestRef.current) return;
         setCode(result.code.trim());
         setPseudo(result.pseudo);
+        setEngine(result.engine || (result.pseudo ? 'pseudo' : ''));
       })
       .catch(() => {
         if (requestId === requestRef.current) setCode('');
@@ -103,12 +105,16 @@ export function DecompilerView({ rizin, address, functionName, className }: Deco
         <span className="font-mono text-xs text-muted-foreground">
           {pseudo ? 'Pseudocode' : 'Decompiler'}{functionName ? ` - ${functionName}` : ''}
         </span>
-        {pseudo && code ? (
+        {engine ? (
           <span
-            title="This build has no decompiler plugin (jsdec or rz-ghidra). Showing Rizin pseudo-disassembly instead."
+            title={
+              engine === 'pseudo'
+                ? 'Stock WASM has no jsdec or rz-ghidra. This is Rizin pdf with asm.pseudo.'
+                : `Decompiler command: ${engine}`
+            }
             className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
           >
-            Pseudo
+            {engine}
           </span>
         ) : null}
         <button
