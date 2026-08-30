@@ -80,9 +80,8 @@ export default {
     try {
       const result = await dispatch(body, env);
       return json({ jsonrpc: '2.0', id: body.id ?? null, result });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return json({ jsonrpc: '2.0', id: body.id ?? null, error: { code: -32000, message } });
+    } catch {
+      return json({ jsonrpc: '2.0', id: body.id ?? null, error: { code: -32000, message: 'internal error' } });
     }
   },
 };
