@@ -30,6 +30,10 @@ import {
   enrichXrefNames,
   xrefsFromFunctionRecord,
 } from './xrefs';
+import { assembleFunctionBriefing, mapFunctionSummary, stringsInFunctionBounds } from '../context/briefing';
+import { filterByQuery, paginate } from '../context/pagination';
+import type { AnalysisJob, DecompilerEngine, FunctionBriefing, FunctionSummary, Paginated } from '../context/types';
+import { commitRevision, getCurrentRzdb, updateContext } from './contextStore';
 
 interface CommandQueueItem {
   command: string;
@@ -80,6 +84,8 @@ interface RuntimeConfig {
   noAnalysis: boolean;
   maxOutputBytes: number;
   enableCache: boolean;
+  contextId?: string;
+  deferAnalysis: boolean;
 }
 
 interface NativeSessionApi {
@@ -90,6 +96,7 @@ interface NativeSessionApi {
   getSeek: (sessionId: number) => string;
   saveProject: (sessionId: number, projectPath: string, compress: number) => number;
   loadProject: (sessionId: number, projectPath: string, loadBinIo: number) => number;
+  applyProject?: (sessionId: number, projectPath: string) => number;
   getLastError: (sessionId: number) => string;
   autocomplete?: (sessionId: number, input: string, cursorPos: number, maxResults: number) => string;
   getCommandCatalog?: (sessionId: number) => string;
@@ -324,6 +331,9 @@ export class RizinSession {
   // Decompiler command this build exposes, resolved once from the command
   // catalog: null = not yet looked up, '' = none shipped, otherwise the command.
   private decompilerCmd: string | null = null;
+  private currentJob: AnalysisJob | null = null;
+  private analysisCancelRequested = false;
+  private hasApplyProject = false;
   private runtimeConfig: RuntimeConfig = {
     ioCache: true,
     analysisDepth: 2,
@@ -331,6 +341,7 @@ export class RizinSession {
     noAnalysis: false,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
     enableCache: true,
+    deferAnalysis: false,
   };
 
   private yield(): Promise<void> {
@@ -414,6 +425,8 @@ export class RizinSession {
       const hasSetWriteMode = typeof exported._rzweb_set_write_mode === 'function';
       const hasCommitChanges = typeof exported._rzweb_commit_changes === 'function';
       const hasGetFileSize = typeof exported._rzweb_get_file_size === 'function';
+      const hasApplyProject = typeof exported._rzweb_apply_project === 'function';
+      this.hasApplyProject = hasApplyProject;
       return {
         createSession: this.module.cwrap('rzweb_create_session', 'number', []) as () => number,
         closeSession: this.module.cwrap('rzweb_close_session', 'number', ['number']) as (sessionId: number) => number,
@@ -438,6 +451,12 @@ export class RizinSession {
           projectPath: string,
           loadBinIo: number
         ) => number,
+        applyProject: hasApplyProject
+          ? this.module.cwrap('rzweb_apply_project', 'number', ['number', 'string']) as (
+              sessionId: number,
+              projectPath: string
+            ) => number
+          : undefined,
         getLastError: this.module.cwrap('rzweb_get_last_error', 'string', ['number']) as (sessionId: number) => string,
         autocomplete: hasAutocomplete
           ? this.module.cwrap('rzweb_autocomplete', 'string', ['number', 'string', 'number', 'number']) as (
@@ -673,9 +692,29 @@ export class RizinSession {
       return false;
     }
 
+    if (this.nativeApi.applyProject) {
+      const applied = this.nativeApi.applyProject(this.nativeSessionId, this.projectPath);
+      if (applied) {
+        this.applyDisplayDefaults();
+        return true;
+      }
+      this.emitNotice({
+        severity: 'warning',
+        code: 'apply-project-failed',
+        message: 'Could not apply the saved project onto the open binary.',
+        detail: this.getNativeLastError() || 'rzweb_apply_project returned failure.',
+      });
+      return false;
+    }
+
+    this.emitNotice({
+      severity: 'info',
+      code: 'apply-project-unavailable',
+      message: 'This WASM build cannot apply a project onto an open file (Poo). Using path-based load instead.',
+      detail: 'Rebuild rzwasi with rzweb_apply_project and point VITE_WASM_BASE_URL at that dist.',
+    });
     const loaded = this.nativeApi.loadProject(this.nativeSessionId, this.projectPath, 1);
     if (loaded) {
-      // loadProject resets the core and clears our display settings, re-apply them.
       this.applyDisplayDefaults();
     }
     return !!loaded;
@@ -747,7 +786,7 @@ export class RizinSession {
     });
 
     if (!refreshResult.truncated) {
-      await this.persistCurrentAnalysis();
+      await this.persistCurrentAnalysis('open');
     }
     this.emitAnalysisChanged();
   }
@@ -883,6 +922,10 @@ export class RizinSession {
       callj: runCmdJson,
       cmdAt: (command: unknown, at: unknown) => runCmd(`${command} @ ${at}`),
       log: (...args: unknown[]) => push(args),
+      listFunctions: (offset?: number, limit?: number, query?: string) => this.listFunctions({ offset, limit, query }),
+      listStrings: (offset?: number, limit?: number, contains?: string) => this.listStrings({ offset, limit, contains }),
+      functionBriefing: (address: unknown) => this.functionBriefing(Number(address)),
+      decompile: (address: unknown) => this.getDecompilation(Number(address)),
     };
   }
 
@@ -1023,6 +1066,8 @@ export class RizinSession {
       fileName: this.file?.name ?? null,
       writeMode: this.writeMode,
       isDirty: this.dirty,
+      job: this.currentJob,
+      hasApplyProject: this.hasApplyProject,
     };
   }
 
@@ -1912,38 +1957,36 @@ export class RizinSession {
       this.persistTimer = null;
       if (!this.persistDirty) return;
       this.persistDirty = false;
-      void this.persistCurrentAnalysis();
+      void this.persistCurrentAnalysis('edits');
     }, PERSIST_THROTTLE_MS);
   }
 
-  private async persistCurrentAnalysis(): Promise<void> {
-    if (!this.shouldPersistCache(false) || !this.file || !this.analysisData) {
-      return;
-    }
+  private async persistCurrentAnalysis(reason: 'open' | 'analysis' | 'edits' | 'park' | 'manual' = 'edits'): Promise<void> {
+    if (!this.file) return;
 
     const cacheIsBlocked = this.notices.some(notice => CACHE_BLOCKING_NOTICE_CODES.has(notice.code));
     if (cacheIsBlocked) return;
 
-    // Snapshot before the first await: persistNativeProject() yields, and a
-    // concurrent close() may null these out before the cache entry is built.
-    const file = this.file;
-    const analysisData = this.analysisData;
-    const fileHash = this._fileHash;
-    const analysisDepth = this.runtimeConfig.analysisDepth;
-
-    const serialized = JSON.stringify(analysisData);
     const projectData = await this.persistNativeProject();
+    const contextId = this.runtimeConfig.contextId;
+    if (contextId && projectData && projectData.byteLength > 0) {
+      await commitRevision(contextId, projectData, reason);
+    }
+
+    if (!this.shouldPersistCache(false) || !this.analysisData) return;
+
+    const serialized = JSON.stringify(this.analysisData);
     const cacheEntry: CachedAnalysis = {
-      hash: fileHash,
-      fileName: file.name,
-      fileSize: file.data.length,
+      hash: this._fileHash,
+      fileName: this.file.name,
+      fileSize: this.file.data.length,
       timestamp: Date.now(),
-      analysisDepth,
-      dataSize: serialized.length + (projectData?.byteLength ?? 0) + file.data.byteLength,
+      analysisDepth: this.runtimeConfig.analysisDepth,
+      dataSize: serialized.length + (projectData?.byteLength ?? 0) + this.file.data.byteLength,
       complete: true,
-      binaryData: file.data,
+      binaryData: this.file.data,
       projectData: projectData ?? undefined,
-      data: analysisData,
+      data: this.analysisData,
     };
     await setCachedAnalysis(cacheEntry);
   }
@@ -1970,6 +2013,8 @@ export class RizinSession {
       noAnalysis: config?.noAnalysis ?? false,
       maxOutputBytes: config?.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       enableCache: config?.enableCache ?? true,
+      contextId: config?.contextId,
+      deferAnalysis: config?.deferAnalysis ?? false,
     };
 
     this.analysisData = {
@@ -1998,18 +2043,23 @@ export class RizinSession {
       this._cacheHit = true;
     }
 
-    // An explicit project payload (cold-loading a saved RzWeb project) takes
-    // precedence over any cached analysis. Otherwise fall back to cached project
-    // data so reopening a previously-analyzed binary restores instantly.
     const explicitRestore = !!restoreProjectData && restoreProjectData.byteLength > 0;
-    const projectToRestore = explicitRestore ? restoreProjectData : cached?.projectData;
+    let projectToRestore = explicitRestore ? restoreProjectData : cached?.projectData;
+    if (!explicitRestore && this.runtimeConfig.contextId) {
+      const fromContext = await getCurrentRzdb(this.runtimeConfig.contextId);
+      if (fromContext && fromContext.byteLength > 0) {
+        projectToRestore = fromContext;
+      }
+    }
 
-    if (this.ensureNativeSession() && this.restoreNativeProject(projectToRestore)) {
+    const nativeSessionReady = this.startNativeFileSession(true);
+    this.refreshCurrentAddress();
+
+    if (nativeSessionReady && projectToRestore && this.restoreNativeProject(projectToRestore)) {
       this.analysisCompleted = true;
+      this._cacheHit = true;
       this.refreshCurrentAddress();
 
-      // A freshly cold-loaded project owns the truth: re-read analysis from the
-      // restored core instead of trusting whatever cache happened to be present.
       if (explicitRestore || !hasUsableAnalysisData(this.analysisData)) {
         const refreshResult = await this.refreshAnalysisData({
           markAnalysisComplete: true,
@@ -2022,7 +2072,7 @@ export class RizinSession {
         });
 
         if (!refreshResult.truncated) {
-          await this.persistCurrentAnalysis();
+          await this.persistCurrentAnalysis('open');
         }
       } else {
         this.emitAnalysisChanged();
@@ -2038,22 +2088,41 @@ export class RizinSession {
       return;
     }
 
-    // Open r/w so hex and terminal edits persist and can be exported.
-    const nativeSessionReady = this.startNativeFileSession(true);
-    this.refreshCurrentAddress();
-
     if (file.data.length >= LARGE_BINARY_ALERT_BYTES) {
       this.emitNotice({
         severity: 'warning',
         code: 'large-binary',
-        message: `Large binary (${formatBytes(file.data.length)}). Full analysis runs on open.`,
-        detail: 'Analysis runs entirely in your browser via WebAssembly, so larger files may take longer to process.',
+        message: `Large binary (${formatBytes(file.data.length)}). Analysis will occupy this worker.`,
+        detail: 'Analysis runs in this tab\'s WebAssembly worker. The page opens first. That worker stays busy until the job finishes.',
       });
+    }
+
+    if (this.runtimeConfig.noAnalysis || this.runtimeConfig.deferAnalysis) {
+      if (this.runtimeConfig.noAnalysis) {
+        this.emitNotice({
+          severity: 'warning',
+          code: 'auto-analysis-disabled',
+          message: 'Auto-analysis is disabled. Function and graph views stay empty until you run aa, aaa, or aaaa.',
+        });
+      }
+      const refreshResult = await this.refreshAnalysisData({
+        markAnalysisComplete: false,
+        refreshFunctions: false,
+        refreshStrings: true,
+        refreshImports: true,
+        refreshExports: true,
+        refreshSections: true,
+        refreshInfo: true,
+      });
+      if (!refreshResult.truncated) {
+        await this.persistCurrentAnalysis('open');
+      }
+      return;
     }
 
     let truncated = false;
 
-    if (nativeSessionReady && !this.runtimeConfig.noAnalysis) {
+    if (nativeSessionReady) {
       const analysisResult = this.runNativeCommand(this.getConfiguredAnalysisCommand(), {
         context: 'analysis',
         commandLabel: 'Initial analysis',
@@ -2062,7 +2131,7 @@ export class RizinSession {
       truncated = truncated || analysisResult.truncated;
       this.analysisCompleted = true;
       await this.yield();
-    } else if (!this.runtimeConfig.noAnalysis) {
+    } else {
       const functionsResult = this.loadArrayIntoAnalysis(
         'functions',
         [`${this.getConfiguredAnalysisCommand()};aflj`],
@@ -2079,17 +2148,11 @@ export class RizinSession {
         });
       }
       await this.yield();
-    } else {
-      this.emitNotice({
-        severity: 'warning',
-        code: 'auto-analysis-disabled',
-        message: 'Auto-analysis is disabled. Function and graph views stay empty until you run aa, aaa, or aaaa.',
-      });
     }
 
     const refreshResult = await this.refreshAnalysisData({
       markAnalysisComplete: this.analysisCompleted,
-      refreshFunctions: nativeSessionReady && !this.runtimeConfig.noAnalysis,
+      refreshFunctions: nativeSessionReady,
       refreshStrings: true,
       refreshImports: true,
       refreshExports: true,
@@ -2100,7 +2163,7 @@ export class RizinSession {
     truncated = truncated || refreshResult.truncated;
 
     if (!truncated) {
-      await this.persistCurrentAnalysis();
+      await this.persistCurrentAnalysis('analysis');
     }
   }
 
@@ -2329,8 +2392,8 @@ export class RizinSession {
   // rz-ghidra, pdd from jsdec, or pdc) when the build ships one, else falls back
   // to Rizin's pseudo-disassembly so the view is never empty. The `pseudo` flag
   // lets the UI label fallback output.
-  getDecompilation(address: number): { code: string; pseudo: boolean } {
-    if (!this._isOpen) return { code: '', pseudo: false };
+  getDecompilation(address: number): { code: string; pseudo: boolean; engine: DecompilerEngine } {
+    if (!this._isOpen) return { code: '', pseudo: false, engine: '' };
     const addr = `0x${Math.max(0, Math.floor(address)).toString(16)}`;
 
     const cmd = this.resolveDecompilerCommand();
@@ -2341,10 +2404,10 @@ export class RizinSession {
         suppressNotice: true,
       });
       const code = this.stripAnsi(result.output).trim();
-      if (code) return { code, pseudo: false };
+      if (code) return { code, pseudo: false, engine: cmd as DecompilerEngine };
     }
 
-    return { code: this.getPseudocode(addr), pseudo: true };
+    return { code: this.getPseudocode(addr), pseudo: true, engine: 'pseudo' };
   }
 
   // The command catalog is authoritative, so this resolves to a real decompiler
@@ -2372,18 +2435,186 @@ export class RizinSession {
     return this.stripAnsi(result.output).trim();
   }
 
+  private emitJob(job: AnalysisJob): void {
+    this.currentJob = job;
+    this.emit({ event: 'job', job });
+  }
+
+  async startAnalysisJob(): Promise<AnalysisJob | null> {
+    if (!this._isOpen || !this.file) return this.currentJob;
+    if (this.currentJob?.status === 'analyzing') return this.currentJob;
+    const contextId = this.runtimeConfig.contextId ?? 'anonymous';
+    this.analysisCancelRequested = false;
+    const jobId = crypto.randomUUID();
+    const stages =
+      this.runtimeConfig.analysisDepth >= 3
+        ? ['aa', 'aaaa']
+        : this.runtimeConfig.analysisDepth >= 2
+          ? ['aa', 'aaa']
+          : ['aa'];
+
+    this.emitJob({
+      id: jobId,
+      contextId,
+      phase: 'analysis',
+      progress: 5,
+      message: 'Starting analysis',
+      status: 'analyzing',
+    });
+    if (this.runtimeConfig.contextId) {
+      void updateContext(this.runtimeConfig.contextId, { job: 'analyzing' }).catch(() => undefined);
+    }
+
+    try {
+      for (let i = 0; i < stages.length; i++) {
+        if (this.analysisCancelRequested) break;
+        const cmd = stages[i];
+        this.emitJob({
+          id: jobId,
+          contextId,
+          phase: cmd,
+          progress: Math.round(((i + 0.2) / stages.length) * 100),
+          message: `Running ${cmd}. This worker stays busy until it finishes.`,
+          status: 'analyzing',
+        });
+        this.runNativeCommand(cmd, {
+          context: 'analysis',
+          commandLabel: cmd,
+          suppressNotice: true,
+        });
+        await this.yield();
+      }
+
+      const refreshResult = await this.refreshAnalysisData({
+        markAnalysisComplete: !this.analysisCancelRequested,
+        refreshFunctions: true,
+        refreshStrings: true,
+        refreshImports: true,
+        refreshExports: true,
+        refreshSections: true,
+        refreshInfo: true,
+      });
+      if (!refreshResult.truncated && !this.analysisCancelRequested) {
+        await this.persistCurrentAnalysis('analysis');
+      }
+      const done: AnalysisJob = {
+        id: jobId,
+        contextId,
+        phase: this.analysisCancelRequested ? 'cancelled' : 'idle',
+        progress: 100,
+        message: this.analysisCancelRequested ? 'Analysis cancelled between stages' : 'Analysis complete',
+        status: 'idle',
+      };
+      this.emitJob(done);
+      if (this.runtimeConfig.contextId) {
+        void updateContext(this.runtimeConfig.contextId, { job: 'idle' }).catch(() => undefined);
+      }
+      this.emitAnalysisChanged();
+      return done;
+    } catch (error) {
+      const failed: AnalysisJob = {
+        id: jobId,
+        contextId,
+        phase: 'failed',
+        progress: 0,
+        message: error instanceof Error ? error.message : String(error),
+        status: 'failed',
+      };
+      this.emitJob(failed);
+      if (this.runtimeConfig.contextId) {
+        void updateContext(this.runtimeConfig.contextId, { job: 'failed' }).catch(() => undefined);
+      }
+      return failed;
+    }
+  }
+
+  cancelAnalysisJob(): AnalysisJob | null {
+    this.analysisCancelRequested = true;
+    if (this.currentJob) {
+      this.currentJob = {
+        ...this.currentJob,
+        message: 'Cancel requested. Takes effect after the current analysis command.',
+      };
+      this.emit({ event: 'job', job: this.currentJob });
+    }
+    return this.currentJob;
+  }
+
+  listFunctions(query: { offset?: number; limit?: number; query?: string } = {}): Paginated<FunctionSummary> {
+    const functions = (this.analysisData?.functions ?? []) as FunctionLike[];
+    const mapped = functions.map((fn) => mapFunctionSummary(fn));
+    const filtered = filterByQuery(mapped, query.query, (item) => `${item.name} ${item.addr.toString(16)}`);
+    return paginate(filtered, query.offset, query.limit);
+  }
+
+  listStrings(query: { offset?: number; limit?: number; contains?: string } = {}): Paginated<{ addr: number; string: string; length?: number }> {
+    const raw = (this.analysisData?.strings ?? []) as Array<{ vaddr?: number; paddr?: number; string?: string; length?: number; offset?: number }>;
+    const mapped = raw.map((entry) => ({
+      addr: parseNum(entry.vaddr) ?? parseNum(entry.offset) ?? parseNum(entry.paddr) ?? 0,
+      string: entry.string ?? '',
+      length: entry.length,
+    }));
+    const filtered = filterByQuery(mapped, query.contains, (item) => item.string);
+    return paginate(filtered, query.offset, query.limit);
+  }
+
+  async functionBriefing(address: number): Promise<FunctionBriefing> {
+    const functions = (this.analysisData?.functions ?? []) as FunctionLike[];
+    const fn = findFunctionAt(address, functions) ?? { offset: address, name: `fcn.${address.toString(16)}`, size: 0 };
+    const xrefs = this.getXrefs(address);
+    const strings = stringsInFunctionBounds(
+      fn,
+      (this.analysisData?.strings ?? []) as Array<{ vaddr?: number; string?: string; offset?: number }>
+    );
+    const decompile = this.getDecompilation(address);
+    let prototype: string | undefined;
+    let vars: unknown;
+    const afi = this.parseJSON(
+      this.runSessionCommand(`afij @ 0x${address.toString(16)}`, {
+        context: 'metadata',
+        commandLabel: 'Function info',
+        suppressNotice: true,
+      }).output
+    );
+    if (Array.isArray(afi) && afi[0] && typeof afi[0] === 'object') {
+      const rec = afi[0] as Record<string, unknown>;
+      if (typeof rec.signature === 'string') prototype = rec.signature;
+      vars = rec.vars;
+    } else if (afi && typeof afi === 'object') {
+      const rec = afi as Record<string, unknown>;
+      if (typeof rec.signature === 'string') prototype = rec.signature;
+      vars = rec.vars;
+    }
+    return assembleFunctionBriefing({
+      fn,
+      xrefs: {
+        to: xrefs.to.map((e) => ({ addr: e.from ?? e.addr, type: e.type, name: e.name })),
+        from: xrefs.from.map((e) => ({ addr: e.to ?? e.addr, type: e.type, name: e.name })),
+      },
+      strings,
+      prototype,
+      vars,
+      decompile: { code: decompile.code, engine: decompile.engine },
+    });
+  }
+
+  async checkpoint(): Promise<boolean> {
+    try {
+      await this.persistCurrentAnalysis('manual');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     this.cancelScheduledPersist();
     if (this._isOpen) {
-      // Flush any throttled persist while the native session is still alive so
-      // saveProject() runs before the session is torn down.
-      if (this.persistDirty) {
-        this.persistDirty = false;
-        try {
-          await this.persistCurrentAnalysis();
-        } catch {
-          // A failed final persist must not block teardown.
-        }
+      this.persistDirty = false;
+      try {
+        await this.persistCurrentAnalysis('park');
+      } catch {
+        // A failed final persist must not block teardown.
       }
 
       if (this.nativeApi && this.nativeSessionId != null) {

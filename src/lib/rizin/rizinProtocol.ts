@@ -1,3 +1,5 @@
+import type { AnalysisJob, DecompilerEngine, FunctionBriefing, FunctionSummary, Paginated } from '../context/types';
+
 export interface RizinFile {
   name: string;
   data: Uint8Array;
@@ -10,6 +12,8 @@ export interface RizinInstanceConfig {
   noAnalysis?: boolean;
   maxOutputBytes?: number;
   enableCache?: boolean;
+  contextId?: string;
+  deferAnalysis?: boolean;
 }
 
 export interface FunctionDetailCacheEntry {
@@ -106,6 +110,8 @@ export interface RizinStateSnapshot {
   fileName: string | null;
   writeMode: boolean;
   isDirty: boolean;
+  job: AnalysisJob | null;
+  hasApplyProject: boolean;
 }
 
 export type RizinRequest =
@@ -125,6 +131,12 @@ export type RizinRequest =
   | { id: number; method: 'patchFile'; offset: number; hex: string }
   | { id: number; method: 'exportBinary' }
   | { id: number; method: 'runScript'; source: string; language: 'rz' | 'js' }
+  | { id: number; method: 'startAnalysis' }
+  | { id: number; method: 'cancelAnalysis' }
+  | { id: number; method: 'listFunctions'; offset?: number; limit?: number; query?: string }
+  | { id: number; method: 'listStrings'; offset?: number; limit?: number; contains?: string }
+  | { id: number; method: 'functionBriefing'; address: number }
+  | { id: number; method: 'checkpoint' }
   | { id: number; method: 'close' };
 
 export type RizinMethod = RizinRequest['method'];
@@ -140,7 +152,7 @@ export interface RizinResultMap {
   readMemory: { bytes: Uint8Array };
   getXrefs: { xrefs: XrefsResult };
   getCallGraph: { graph: CallGraphResult };
-  getDecompilation: { code: string; pseudo: boolean };
+  getDecompilation: { code: string; pseudo: boolean; engine: DecompilerEngine };
   exportProject: { data: Uint8Array };
   importProject: {
     analysis: AnalysisData | null;
@@ -152,6 +164,12 @@ export interface RizinResultMap {
   patchFile: { ok: boolean; error?: string };
   exportBinary: { data: Uint8Array; name: string };
   runScript: { output: string; error?: string };
+  startAnalysis: { job: AnalysisJob | null };
+  cancelAnalysis: { job: AnalysisJob | null };
+  listFunctions: Paginated<FunctionSummary>;
+  listStrings: Paginated<{ addr: number; string: string; length?: number }>;
+  functionBriefing: { briefing: FunctionBriefing };
+  checkpoint: { ok: boolean };
   close: Record<string, never>;
 }
 
@@ -159,13 +177,14 @@ export type RizinResult = RizinResultMap[RizinMethod];
 
 export type RizinResponse =
   | { id: number; ok: true; result: RizinResult; state: RizinStateSnapshot }
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string; errorInfo?: { code: string; message: string; detail?: string } };
 
 export type RizinWorkerEvent =
   | { event: 'ready' }
   | { event: 'progress'; phase: RizinLoadPhase; progress: number; message: string }
   | { event: 'notice'; notice: RizinNotice }
-  | { event: 'analysisChanged'; analysis: AnalysisData | null; state: RizinStateSnapshot };
+  | { event: 'analysisChanged'; analysis: AnalysisData | null; state: RizinStateSnapshot }
+  | { event: 'job'; job: AnalysisJob };
 
 export type RizinControl = { control: 'init' };
 

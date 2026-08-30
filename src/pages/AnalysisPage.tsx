@@ -4,16 +4,16 @@ import { toast } from 'sonner';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 
 import { useFileStore, useRizinStore, useUIStore, useSettingsStore, useTabStore, type ActivePanel } from '@/stores';
-import { loadRizinModule, getCachedVersions, RizinInstance, decodeProjectBundle, findFunctionAt, buildCfgElements, type RizinNotice } from '@/lib/rizin';
+import { createRizinWorker, destroyRizinWorker, getCachedVersions, RizinInstance, decodeProjectBundle, findFunctionAt, buildCfgElements, createContext, listRevisionMeta, getRevision, type RizinNotice, type AnalysisJob, type ContextRevision } from '@/lib/rizin';
 import { useKeyboardShortcuts } from '@/hooks';
 import { RizinTerminal } from '@/components/terminal';
 import { HexView, FunctionsView, StringsView, GraphView, DisassemblyView, ImportsView, ExportsView, SectionsView, HeaderInfoPanel, XrefsView, DecompilerView, FlagsView, CallGraphView } from '@/components/views';
 
 // Code-split the script editor so CodeMirror only loads when Scripts is opened.
 const ScriptsView = lazy(() => import('@/components/views/ScriptsView').then((m) => ({ default: m.ScriptsView })));
-import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog } from '@/components/ui';
+import { Button, Progress, Badge, Tabs, TabsList, TabsTrigger, CommandPalette, SettingsDialog, ShortcutsDialog, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui';
 import { cn, stripAnsi } from '@/lib/utils';
-import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle, Save, FolderOpen, Braces, ArrowLeftRight, Pencil, Download, ScrollText, Plus, Flag, Network } from 'lucide-react';
+import { Menu, X, Terminal as TerminalIcon, Settings, Code, Layout, Share2, Quote, FileCode, Home, Package, ArrowUpRight, Layers, Info, AlertTriangle, Save, FolderOpen, Braces, ArrowLeftRight, Pencil, Download, ScrollText, Plus, Flag, Network, Camera, History } from 'lucide-react';
 import type { RzFunction, RzDisasmLine, RzString, RzImport, RzExport, RzSection } from '@/types/rizin';
 
 function useResponsiveLayout() {
@@ -76,6 +76,21 @@ type GraphElements = {
   edges: Array<{ source: string; target: string; type?: 'jump' | 'fail' | 'call' }>;
 };
 
+type TabRuntime = {
+  instance: RizinInstance;
+  worker: Worker;
+  ready: boolean;
+  promise: Promise<void>;
+};
+
+const REVISION_LABEL: Record<string, string> = {
+  open: 'Open',
+  analysis: 'Analysis',
+  edits: 'Edits',
+  manual: 'Snapshot',
+  park: 'Park',
+};
+
 export default function AnalysisPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -109,12 +124,15 @@ export default function AnalysisPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [togglingWriteMode, setTogglingWriteMode] = useState(false);
   const [exportingBinary, setExportingBinary] = useState(false);
+  const [job, setJob] = useState<AnalysisJob | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [revisionList, setRevisionList] = useState<Array<Omit<ContextRevision, 'rzdb'>>>([]);
+  const [snapshotting, setSnapshotting] = useState(false);
   const functionDetailRequestRef = useRef(0);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
-  // Per-tab Rizin instances persist here so background analysis keeps running
-  // while another tab is active. Disposed on tab close and on leaving Analysis.
-  const instancesRef = useRef(new Map<string, { instance: RizinInstance; ready: boolean; promise: Promise<void> }>());
+  const instancesRef = useRef(new Map<string, TabRuntime>());
 
   // Seed the first tab from the binary launched on the Home page.
   useEffect(() => {
@@ -126,11 +144,12 @@ export default function AnalysisPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Dispose every tab's worker when leaving the Analysis page.
   useEffect(() => {
     const instances = instancesRef.current;
     return () => {
-      for (const entry of instances.values()) void entry.instance.close();
+      for (const entry of instances.values()) {
+        void entry.instance.close().finally(() => destroyRizinWorker(entry.worker));
+      }
       instances.clear();
     };
   }, []);
@@ -192,16 +211,28 @@ export default function AnalysisPage() {
       });
     });
 
-    // Sync write-mode and dirty flags after any edit, including terminal writes.
     const unsubscribeState = activeInstance.onStateChanged(() => {
       setWriteMode(activeInstance.isWriteMode);
       setIsDirty(activeInstance.isDirty);
+      setJob(activeInstance.job);
     });
+
+    const unsubscribeJob = activeInstance.onJob((next) => {
+      setJob(next);
+      if (next.status === 'idle' && next.phase === 'idle') {
+        toast.success('Analysis complete');
+      } else if (next.status === 'failed') {
+        toast.error(next.message || 'Analysis failed');
+      }
+    });
+
+    setJob(activeInstance.job);
 
     return () => {
       unsubscribeAnalysis();
       unsubscribeNotice();
       unsubscribeState();
+      unsubscribeJob();
     };
   }, [activeInstance]);
 
@@ -230,7 +261,7 @@ export default function AnalysisPage() {
 
       try {
         if (!entry) {
-          const worker = await loadRizinModule({
+          const worker = await createRizinWorker({
             onProgress: ({ phase, progress, message }) => {
               if (cancelled) return;
               setLoadPhase(phase);
@@ -242,9 +273,9 @@ export default function AnalysisPage() {
           setCachedVersions(versions);
           const rz = new RizinInstance(worker);
           if (!cancelled) {
-            setLoadPhase('analyzing');
+            setLoadPhase('processing');
             setLoadProgress(78);
-            setLoadMessage(noAnalysis ? 'Opening binary without auto-analysis...' : 'Running initial analysis and indexing binary data...');
+            setLoadMessage('Opening binary...');
           }
           const promise = rz.open(file, {
             ioCache,
@@ -252,21 +283,30 @@ export default function AnalysisPage() {
             noAnalysis,
             maxOutputBytes: maxOutputSizeMb * 1024 * 1024,
             enableCache: shouldCache,
+            contextId: tabId,
+            deferAnalysis: true,
             extraArgs: ['-e', 'scr.color=0', '-e', 'scr.utf8=false'],
           }, file.projectData);
-          entry = { instance: rz, ready: false, promise };
+          entry = { instance: rz, worker, ready: false, promise };
           instancesRef.current.set(tabId, entry);
           await promise;
           entry.ready = true;
+          if (!cancelled && !rz.cacheHit && !noAnalysis) {
+            void rz.startAnalysis();
+          }
           if (!cancelled) {
-            toast.success(rz.cacheHit ? 'Loaded from analysis cache' : noAnalysis ? 'Binary opened' : 'Analysis complete');
+            toast.success(rz.cacheHit ? 'Restored context' : 'Binary opened');
           }
         } else if (!entry.ready) {
           await entry.promise;
           entry.ready = true;
         }
       } catch (error) {
+        const failed = instancesRef.current.get(tabId);
         instancesRef.current.delete(tabId);
+        if (failed) {
+          void failed.instance.close().finally(() => destroyRizinWorker(failed.worker));
+        }
         console.error('Failed to load Rizin:', error);
         if (!cancelled) {
           setError(String(error));
@@ -283,7 +323,9 @@ export default function AnalysisPage() {
       setLoadPhase('ready');
       setActiveInstance(rz);
       setAnalysisReady(true);
+      setSessionReady(true);
       setAlerts(rz.allNotices);
+      setJob(rz.job);
 
       // Restore this tab's parked view, or seek to the binary's entrypoint.
       const parked = useTabStore.getState().tabs.find((t) => t.id === tabId)?.parked;
@@ -521,13 +563,20 @@ export default function AnalysisPage() {
       const bundle = decodeProjectBundle(bytes);
       if (bundle) {
         parkActiveTab();
-        openTab({
-          id: crypto.randomUUID(),
+        const ctx = await createContext({
           name: bundle.name,
+          data: bundle.binary,
+          analysisDepth,
+          rzdb: bundle.rzdb,
+        });
+        openTab({
+          id: ctx.id,
+          name: ctx.name,
           data: bundle.binary,
           size: bundle.binary.byteLength,
           loadedAt: Date.now(),
           projectData: bundle.rzdb,
+          artifactHash: ctx.artifactHash,
         });
         toast.success('Project loaded');
         return;
@@ -557,7 +606,7 @@ export default function AnalysisPage() {
     } finally {
       setProjectAction(null);
     }
-  }, [activeInstance, setCurrentAddress, setSelectedFunction, setAnalysisReady, parkActiveTab, openTab]);
+  }, [activeInstance, setCurrentAddress, setSelectedFunction, setAnalysisReady, parkActiveTab, openTab, analysisDepth]);
 
   useEffect(() => {
     if (!activeInstance || !selectedFunction || currentAddress <= 0) {
@@ -591,8 +640,8 @@ export default function AnalysisPage() {
   const handleCloseTab = useCallback((id: string) => {
     const entry = instancesRef.current.get(id);
     if (entry) {
-      void entry.instance.close();
       instancesRef.current.delete(id);
+      void entry.instance.close().finally(() => destroyRizinWorker(entry.worker));
     }
     const wasLast = tabs.length <= 1;
     closeTab(id);
@@ -621,33 +670,86 @@ export default function AnalysisPage() {
     try {
       const data = new Uint8Array(await file.arrayBuffer());
       parkActiveTab();
-      openTab({ id: crypto.randomUUID(), name: file.name, data, size: file.size, loadedAt: Date.now() });
+      const ctx = await createContext({ name: file.name, data, analysisDepth });
+      openTab({
+        id: ctx.id,
+        name: ctx.name,
+        data,
+        size: file.size,
+        loadedAt: Date.now(),
+        artifactHash: ctx.artifactHash,
+      });
     } catch {
       toast.error('Unable to open the selected binary.');
     }
-  }, [parkActiveTab, openTab]);
+  }, [parkActiveTab, openTab, analysisDepth]);
 
   const handleGoHome = useCallback(() => {
-    for (const entry of instancesRef.current.values()) void entry.instance.close();
+    for (const entry of instancesRef.current.values()) {
+      void entry.instance.close().finally(() => destroyRizinWorker(entry.worker));
+    }
     instancesRef.current.clear();
     resetTabs();
     clearCurrentFile();
     navigate('/');
   }, [resetTabs, clearCurrentFile, navigate]);
 
-  if (isLoading) {
+  const handleSnapshot = useCallback(async () => {
+    if (!activeInstance) return;
+    setSnapshotting(true);
+    try {
+      const ok = await activeInstance.checkpoint();
+      toast.success(ok ? 'Snapshot saved' : 'Snapshot failed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Snapshot failed');
+    } finally {
+      setSnapshotting(false);
+    }
+  }, [activeInstance]);
+
+  const handleOpenHistory = useCallback(async () => {
+    if (!activeTabId) return;
+    setHistoryOpen(true);
+    try {
+      setRevisionList(await listRevisionMeta(activeTabId));
+    } catch {
+      setRevisionList([]);
+    }
+  }, [activeTabId]);
+
+  const handleRestoreRevision = useCallback(async (revisionId: string) => {
+    if (!activeInstance || !activeTabId) return;
+    try {
+      const rev = await getRevision(revisionId);
+      if (!rev) {
+        toast.error('That snapshot is gone.');
+        return;
+      }
+      await activeInstance.importProject(rev.rzdb);
+      setAnalysisReady(true);
+      setAnalysisRevision((v) => v + 1);
+      setRevisionList(await listRevisionMeta(activeTabId));
+      toast.success('Restored snapshot');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to restore snapshot.');
+    }
+  }, [activeInstance, activeTabId]);
+
+  const handleCancelJob = useCallback(() => {
+    void activeInstance?.cancelAnalysis();
+  }, [activeInstance]);
+
+  if (isLoading && !sessionReady) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background">
         <div className="mb-8 rounded-full bg-primary/10 p-6">
           <TerminalIcon className="h-16 w-16 animate-pulse text-primary" />
         </div>
         <h2 className="mb-2 text-2xl font-semibold text-foreground">
-          {loadPhase === 'downloading' ? 'Loading Rizin' : loadPhase === 'analyzing' ? 'Analyzing binary' : 'Preparing session'}
+          {loadPhase === 'downloading' ? 'Loading Rizin' : 'Opening binary'}
         </h2>
         <p className="mb-6 max-w-md text-center text-muted-foreground">
-          {loadPhase === 'analyzing'
-            ? 'Mapping functions, strings, sections, and control flow.'
-            : 'This will only take a moment.'}
+          Analysis starts after this page opens. That worker stays busy until it finishes.
         </p>
         <div className="w-80"><Progress value={loadProgress} showValue /></div>
       </div>
@@ -759,6 +861,24 @@ export default function AnalysisPage() {
             <Button
               variant="ghost"
               size="icon-sm"
+              onClick={() => void handleSnapshot()}
+              disabled={!activeInstance || snapshotting}
+              title="Snapshot this context"
+            >
+              <Camera className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void handleOpenHistory()}
+              disabled={!activeInstance}
+              title="Context history"
+            >
+              <History className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={handleLoadProjectClick}
               disabled={!activeInstance || projectAction !== null}
               title={projectAction === 'load' ? 'Loading project' : 'Load .rzdb project'}
@@ -826,6 +946,21 @@ export default function AnalysisPage() {
         </div>
       </header>
 
+      {job && job.status === 'analyzing' && (
+        <div className="flex items-center gap-3 border-b border-border bg-primary/5 px-3 py-2 sm:px-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-foreground">{job.message}</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Cancel only works between stages. Mid-aaa on this worker cannot be interrupted.
+            </p>
+            <div className="mt-1 w-full max-w-md"><Progress value={job.progress} /></div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleCancelJob}>
+            Cancel
+          </Button>
+        </div>
+      )}
+
       {alerts.length > 0 && (
         <div className="border-b border-border bg-background px-3 py-2 sm:px-4">
           <div className="space-y-2">
@@ -884,6 +1019,12 @@ export default function AnalysisPage() {
 
           <Panel id="main">
             <div className="h-full relative bg-[#0f172a]">
+              {(!analysisReady || isLoading) && sessionReady && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/80">
+                  <p className="text-sm text-muted-foreground">Opening this binary...</p>
+                  <div className="w-64"><Progress value={loadProgress} /></div>
+                </div>
+              )}
               {currentView === 'terminal' && activeInstance && (
                 <RizinTerminal
                   rizin={activeInstance}
@@ -938,6 +1079,7 @@ export default function AnalysisPage() {
           </div>
           <div className="tabular-nums">0x{currentAddress.toString(16).padStart(8, '0')}</div>
           {selectedFunction && <div className="text-primary">{selectedFunction}</div>}
+          {job?.status === 'analyzing' && <div className="text-amber-500">{job.phase}</div>}
           </div>
           <div>RzWeb</div>
         </div>
@@ -952,6 +1094,38 @@ export default function AnalysisPage() {
       />
       <SettingsDialog />
       <ShortcutsDialog />
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Context history</DialogTitle>
+            <DialogDescription>
+              Restoring a snapshot applies that .rzdb onto the open file and writes a new child revision.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-80 space-y-2 overflow-auto">
+            {revisionList.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No snapshots yet.</p>
+            ) : (
+              revisionList.map((rev) => (
+                <div key={rev.id} className="flex items-center justify-between gap-2 rounded border border-border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium">{REVISION_LABEL[rev.reason] ?? rev.reason}</p>
+                    <p className="text-[10px] text-muted-foreground">{new Date(rev.createdAt).toLocaleString()}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRestoreRevision(rev.id)}
+                    disabled={job?.status === 'analyzing'}
+                  >
+                    Restore
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
