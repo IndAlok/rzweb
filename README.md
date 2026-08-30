@@ -101,9 +101,9 @@ Local RzWeb keeps files on the device. They are loaded into WebAssembly memory a
 
 The browser app does not upload binaries. Analysis, context history, and reopen happen on this machine via WebAssembly, IndexedDB, and Emscripten's in-memory filesystem.
 
-Hosted MCP is a different product. That path stores artifacts and `.rzdb` files on the server you deploy (R2 plus a container). Treat it as an explicit upload of whatever you open, including malware samples. Do not point Cursor at a hosted URL if you need the local privacy claim.
+Hosted MCP in `hosted/` is a different product and it is not on the free path. That folder is a Worker plus a container sketch. Cloudflare Containers are paid. Do not deploy it if you want this project to stay free.
 
-Local MCP (`mcp/` in this repo) uses the same `rizin.wasm` on your disk under `~/.rzweb/contexts`. Nothing leaves the machine unless you configure it otherwise.
+Local MCP (`mcp/` in this repo) uses the same `rizin.wasm` on your disk under `~/.rzweb/contexts`. Point a local MCP client at it. Binaries stay on the machine.
 
 ## Browser Constraints
 
@@ -124,20 +124,37 @@ Vitest cannot run `rizin.wasm`. After a WASM publish, confirm:
 - Depth 2 job banner, and cancel between `aa` and `aaa`.
 - Missing `rzweb_apply_project` shows the apply-project notice.
 
-## Building Locally
+## Building locally
+
+Node 20.19+ or 22.12+ is required. Ubuntu 24.04 apt `nodejs` is 18. Vite will crash with `crypto.hash is not a function`. The repo pins 22 in `.nvmrc`.
+
+If `node -v` is still v18, put a current Node 22 ahead of `/usr/bin/node`:
 
 ```bash
-git clone https://github.com/IndAlok/rzweb
+mkdir -p "$HOME/.local"
+curl -fsSL https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz -o /tmp/node22.tar.xz
+tar -xJf /tmp/node22.tar.xz -C "$HOME/.local"
+ln -sfn "$HOME/.local/node-v22.23.2-linux-x64" "$HOME/.local/node"
+export PATH="$HOME/.local/node/bin:$PATH"
+# add that export to ~/.bashrc so new terminals keep it
+```
+
+Then:
+
+```bash
 cd rzweb
+node -v   # must print v22.x
 npm install
 npm run dev
 ```
+
+Open http://localhost:3000. Default WASM is the GitHub Pages `rzwasi` build. Leave `VITE_WASM_BASE_URL` unset unless you are testing a local dist.
 
 ## Architecture
 
 The frontend uses React, TypeScript, Tailwind CSS, Zustand, xterm.js, and Cytoscape for graph rendering. Each live Context owns a Web Worker that loads `rizin.wasm`, queues RPCs, and persists revisions. The main thread talks to it through a typed RPC facade. The reverse engineering core comes from the companion [rzwasi](https://github.com/IndAlok/rzwasi) repository, which builds Rizin to WebAssembly and exports `rzweb_apply_project` so a `.rzdb` can be applied onto an already-open file.
 
-Local MCP lives in `mcp/`. Hosted MCP lives in `hosted/` and is an explicit upload path.
+Local MCP lives in `mcp/`. Talk to it from [Antigravity CLI](https://www.antigravity.google/docs/cli/install/) (`agy`) with a Google AI Pro login. That is the agent path. `hosted/` is not required and is not free to run at scale.
 
 ## Community & Support
 

@@ -1,35 +1,19 @@
 # Hosted RzWeb MCP
 
-This folder is a Cloudflare Worker plus a Container image. The Worker is the coordination plane: OAuth or API key, MCP JSON-RPC, R2 for artifacts and `.rzdb` files. It does **not** run `aaa`. Analysis goes to a sticky native runtime (Cloudflare Container or any Linux VM) that runs [rizin-mcp](https://github.com/rizinorg/rizin-mcp).
+This folder is a Cloudflare Worker plus a Container image sketch. The Worker is a coordination plane: API key, MCP JSON-RPC, R2 for artifacts and `.rzdb` files. It does not run `aaa`.
 
-Binaries leave the device in this mode. Do not use it if you need RzWeb's local privacy claim.
+Do not deploy this on the free path. Cloudflare Pages for the browser app is already free. GitHub Pages for `rzwasi` is already free. Cloudflare Containers are paid. A real hosted `aaa` will also upload malware samples to R2.
 
 Putting `rizin.wasm` in a 128MB Worker isolate is an experiment only. Do not advertise that as serverless Rizin. A real `aaa` will time out or OOM.
 
-## What you deploy
+Keep this tree in the repo for later. The product people should use today is the browser app plus local `../mcp`.
 
-1. Cloudflare account, R2 bucket `rzweb-contexts`.
+## If you ignore that and deploy anyway
+
+1. Cloudflare account, R2 bucket `rzweb-contexts` (R2 has a free allowance, the Container does not).
 2. `npx wrangler login` then `npx wrangler deploy` from this directory after `npm install`.
-3. Set `ENGINE_URL` to the Container (or any host) running native rizin + rizin-mcp.
-4. Set `MCP_API_KEY`, or wire OAuth / Cloudflare Access in front of `/mcp`.
-5. Build the Dockerfile from a rizin-mcp checkout:
+3. `ENGINE_URL` has to be an HTTP MCP process. `rizin-mcp` is stdio only. There is no adapter in this repo.
+4. Set `MCP_API_KEY`.
+5. The Dockerfile is a template. Native rizin plus an HTTP front are still your problem.
 
-```bash
-docker build -f /path/to/rzweb/hosted/Dockerfile /path/to/rizin-mcp
-```
-
-Install native rizin in that image before you rely on analysis. Keep `--no-raw`. Leave write tools off unless a Context says otherwise.
-
-6. Quota the container. `aaaa` on a huge sample can eat the account.
-
-7. Point Cursor at the Worker URL (`https://<worker>/mcp`) as a remote MCP server.
-
-## Tools
-
-The Worker implements context list/get/create/export against R2. Read and analysis tools are forwarded to `ENGINE_URL`. `rename_function`, `set_comment`, and raw `command` return `not-permitted`.
-
-## Layout
-
-- `src/index.ts` Worker fetch handler. No WASM, no `aaa`.
-- `wrangler.toml` R2 binding and `ENGINE_URL`.
-- `Dockerfile` native engine template.
+Write and raw command tools stay off.
