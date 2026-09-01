@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 
 export interface NativeApi {
   createSession: () => number;
@@ -24,6 +23,7 @@ interface EmscriptenModule {
   onRuntimeInitialized?: () => void;
   locateFile?: (path: string) => string;
   noInitialRun?: boolean;
+  calledRun?: boolean;
 }
 
 function wasmDir(): string {
@@ -58,30 +58,24 @@ export class WasmEngine {
       throw new Error(`rizin.js not found in ${dir}`);
     }
 
-    const Module: EmscriptenModule = {
-      FS: {} as EmscriptenModule['FS'],
-      cwrap: () => () => undefined,
-      locateFile: (file) => path.join(dir, file),
-      noInitialRun: true,
-    };
+    const require = createRequire(jsPath);
+    const live = require(jsPath) as EmscriptenModule;
+    if (!live.calledRun) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('rizin.wasm init timed out')), 60_000);
+        const previous = live.onRuntimeInitialized;
+        live.onRuntimeInitialized = () => {
+          clearTimeout(timer);
+          previous?.();
+          resolve();
+        };
+        if (live.calledRun) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    }
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('rizin.wasm init timed out')), 60_000);
-      Module.onRuntimeInitialized = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      (globalThis as unknown as { Module: EmscriptenModule }).Module = Module;
-      try {
-        const require = createRequire(pathToFileURL(jsPath).href);
-        require(jsPath);
-      } catch (error) {
-        clearTimeout(timer);
-        reject(error);
-      }
-    });
-
-    const live = (globalThis as unknown as { Module: EmscriptenModule }).Module;
     const exported = live as unknown as Record<string, unknown>;
     this.hasApply = typeof exported._rzweb_apply_project === 'function';
     this.api = {
@@ -113,6 +107,8 @@ export class WasmEngine {
     this.liveContextId = contextId;
     this.filePath = `/work/${contextId}.bin`;
     this.projectPath = `/work/${contextId}.rzdb`;
+    api.command(id, 'e log.level=0');
+    api.command(id, 'e scr.pager=');
     mod.FS.writeFile(this.filePath, data);
     const opened = api.openFile(id, this.filePath, 0, 1);
     if (!opened) {
