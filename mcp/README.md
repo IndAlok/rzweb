@@ -1,16 +1,16 @@
-# RzWeb local MCP
+# RzWeb MCP
 
-Node MCP server for RzWeb Contexts. Same `rizin.js` / `rizin.wasm` pair as the browser app. Contexts live on disk under `~/.rzweb/contexts` (or `RZWEB_CONTEXT_DIR`).
+A local MCP server for RzWeb contexts. Same `rizin.js` and `rizin.wasm` as the browser app. Contexts live under `~/.rzweb/contexts` unless you set `RZWEB_CONTEXT_DIR`.
 
-Do not compile rizin-mcp to WASM. Point this server at a rzwasi dist.
+This is stock MCP. Stdio is the default. `--http` is there for clients that only take a URL. It is not tied to one editor.
 
-Binaries stay on this machine. That is the privacy path. `../hosted` is an upload sketch and is not part of the free deploy.
+Do not compile rizin-mcp to WASM. Point this process at a rzwasi dist.
 
-This server speaks stock MCP over stdio (default) or streamable HTTP. It is not tied to any one editor.
+The `hosted/` folder is a Cloudflare Worker sketch. Containers are paid. Do not deploy it.
 
-## Setup
+## Build
 
-Needs Node 20.19+ or 22.12+. Ubuntu apt Node 18 is too old.
+Node 20.19 or 22.12 and newer. Ubuntu apt Node 18 is too old.
 
 ```bash
 cd mcp
@@ -18,43 +18,34 @@ npm install
 npm run build
 ```
 
-Put `rizin.js` and `rizin.wasm` somewhere Node can read them. Published pair:
+You need a folder that contains both `rizin.js` and `rizin.wasm`. Published pair:
 
 ```bash
 mkdir -p "$HOME/rzwasi-dist"
 curl -fsSL -o "$HOME/rzwasi-dist/rizin.js" https://indalok.github.io/rzwasi/rizin.js
 curl -fsSL -o "$HOME/rzwasi-dist/rizin.wasm" https://indalok.github.io/rzwasi/rizin.wasm
+```
+
+Or set `RZWEB_WASM_DIR` to a `dist/` you built yourself.
+
+Smoke it from a terminal:
+
+```bash
 export RZWEB_WASM_DIR="$HOME/rzwasi-dist"
 node dist/index.js
 ```
 
-Or, after you build rzwasi yourself, set `RZWEB_WASM_DIR` to that `dist/`.
+Stdio stays quiet until a client talks to it. That is normal.
 
-Stdio is the default. Streamable HTTP:
+## The server block
 
-```bash
-node dist/index.js --http 8788
-```
-
-Write tools (`rename_function`, `set_comment`) stay off unless you pass `--allow-write`. Raw `command` stays off unless `--allow-raw`.
-
-## Agent (Antigravity CLI)
-
-Google AI Pro no longer serves the old `gemini` CLI. Use [Antigravity CLI](https://www.antigravity.google/docs/cli/install/) and sign in with the same Google account.
-
-```bash
-curl -fsSL https://antigravity.google/cli/install.sh | bash
-# new shell so ~/.local/bin is on PATH
-agy
-```
-
-First launch opens a browser. Sign in. Then add a workspace MCP profile. Copy `../.agents/mcp_config.json.example` to `.agents/mcp_config.json` at the repo root and fix the two paths:
+Copy [stdio.example.json](stdio.example.json) and fill the three absolute paths.
 
 ```json
 {
   "mcpServers": {
     "rzweb": {
-      "command": "node",
+      "command": "/absolute/path/to/node",
       "args": ["/absolute/path/to/rzweb/mcp/dist/index.js"],
       "env": {
         "RZWEB_WASM_DIR": "/absolute/path/to/rzwasi-dist"
@@ -64,19 +55,62 @@ First launch opens a browser. Sign in. Then add a workspace MCP profile. Copy `.
 }
 ```
 
-`node` here must be 20.19+ (the nvm one, not `/usr/bin/node`). If `agy` cannot find it, put the full nvm binary path in `command`.
+`command` has to be a real Node 20.19+ or 22.12+ binary. GUI clients do not inherit your shell `PATH`. If you write `node` and the client finds apt Node 18, the server dies the same way Vite does.
 
-Global equivalent: `~/.gemini/config/mcp_config.json` with the same object.
+On Windows use `node.exe`. Paths can use `/`. Do not paste a Unix home path.
 
-Create a context with `context_create` and a local binary path, then `analysis_start`, then `function_briefing`. Confirm a briefing without uploading anything.
+Optional env:
 
-Do not buy a Gemini API key for day to day work. AI Pro login on `agy` is the quota you already pay for. An AI Studio key is a last resort for headless CI and it burns the free API cap fast.
+- `RZWEB_CONTEXT_DIR` if you do not want `~/.rzweb/contexts`
+- `RZWEB_ALLOW_WRITE=1` or put `--allow-write` in `args`
+- `RZWEB_ALLOW_RAW=1` or put `--allow-raw` in `args`
+
+Write tools and raw `command` stay off until you turn them on.
+
+`analysis_start` can sit in `aaa` for minutes. If your client has a tool timeout field, raise it. Antigravity uses `timeout` in milliseconds. Default is 600000. A short timeout looks like a hang.
+
+If you turn on a VS Code MCP sandbox, allow reads of the WASM dir and the context dir. Do not enable sandbox in the example.
+
+## Where the block goes
+
+Most clients wrap that object in `mcpServers` and drop it in their own file.
+
+- Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/.config/Claude/claude_desktop_config.json` on Linux
+- Claude Code: project `.mcp.json`, or `claude mcp add`. HTTP uses `type` set to `http` or `streamable-http`, plus `url`
+- Cursor: `~/.cursor/mcp.json` or project `.cursor/mcp.json`
+- Windsurf: `~/.codeium/windsurf/mcp_config.json`
+- Cline: `cline_mcp_settings.json` under the VS Code globalStorage path for `saoudrizwan.claude-dev`
+- Continue: put the JSON in `.continue/mcpServers/`
+- Antigravity CLI: workspace `.agents/mcp_config.json` or `~/.gemini/config/mcp_config.json`. Remote URL field is `serverUrl`, not `url`
+
+Two wrappers change the root key.
+
+VS Code Copilot uses `servers` in `.vscode/mcp.json` or the user MCP config. Same `command`, `args`, and `env`. You can set `"type": "stdio"`.
+
+Zed uses `context_servers` in its settings file. Same three fields.
+
+Anyone else gets the block and the two rules. Absolute `node`. Absolute `RZWEB_WASM_DIR`.
+
+## HTTP
+
+Some clients will not spawn a process. They want a URL.
+
+```bash
+export RZWEB_WASM_DIR="$HOME/rzwasi-dist"
+node dist/index.js --http 8788
+```
+
+That listens on `http://127.0.0.1:8788/mcp`. Point `url` or `serverUrl` at it. One process, one session. Fine for a single client on this machine.
+
+## First calls
+
+Create a context with `context_create` and a local binary path. Then `analysis_start` with that `context_id`. Then `function_briefing`. Nothing should leave the machine.
 
 ## Tools
 
 Lifecycle: `context_create`, `context_import`, `context_list`, `context_get`, `context_checkpoint`, `context_restore_revision`, `context_fork`, `context_close`, `context_export_bundle`.
 
-Analysis: `analysis_start`, `analysis_status`, `analysis_cancel` (cancel is a notice here, because this process runs stages inside one tool call).
+Analysis: `analysis_start`, `analysis_status`, `analysis_cancel`. Cancel is a notice here. This process runs stages back to back in one tool call.
 
 Read: `list_functions`, `list_strings`, `function_briefing`, `decompile`, `disasm`, `xrefs`, `binary_info`.
 

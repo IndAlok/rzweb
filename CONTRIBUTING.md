@@ -1,74 +1,54 @@
-# Contributing to RzWeb
+# Contributing
 
-Thanks for your interest in improving RzWeb! This guide covers everything you
-need to get a change merged.
+Telegram chat is [here](https://telegram.dog/rizinweb). Bugs and ideas go on [GitHub issues](https://github.com/IndAlok/rzweb/issues/new/choose). The wasm build lives in [rzwasi](https://github.com/IndAlok/rzwasi).
 
-## Quick links
+## Layout
 
-- Community chat: [Telegram](https://telegram.dog/rizinweb)
-- Bugs and ideas: [open an issue](https://github.com/IndAlok/rzweb/issues/new/choose)
-- WebAssembly build: [rzwasi](https://github.com/IndAlok/rzwasi)
-
-## Project layout
-
-RzWeb is the React/TypeScript frontend. The Rizin reverse-engineering core is
-compiled to WebAssembly in the companion [rzwasi](https://github.com/IndAlok/rzwasi)
-repo and loaded at runtime from a CDN — there is no native code in this repo.
+This repo is the React frontend. Rizin is compiled to WebAssembly in rzwasi and loaded at runtime. There is no native code here.
 
 ```
 src/
-  components/   UI + per-analysis views (disassembly, graph, hex, …)
-  lib/rizin/    Worker, RPC protocol, session logic, project bundles
-  stores/       Zustand stores (file, ui, settings, session, rizin)
-  pages/        Home + Analysis routes
+  components/   disassembly, graph, hex views
+  lib/rizin/    worker, RPC, session, project bundles
+  stores/       Zustand stores
+  pages/        Home and Analysis
 ```
 
-The Rizin WASM module runs in a Web Worker (`src/lib/rizin/rizin.worker.ts`);
-the main thread talks to it through a typed RPC facade so the UI never blocks.
+The wasm module runs in `src/lib/rizin/rizin.worker.ts`. The main thread talks to it through a typed RPC facade so the UI does not block.
 
-## Prerequisites
+## Node
 
-- **Node ≥ 20.19** (the repo pins **22.12** via `.nvmrc` / `.node-version`).
-  If you use `nvm`/`fnm`/`asdf`, run `nvm use` (or equivalent) to match.
-
-## Getting started
+20.19 or newer. The repo pins 22.12 in `.nvmrc` and `.node-version`. Ubuntu apt Node 18 will not start Vite. See the root README.
 
 ```bash
 git clone https://github.com/IndAlok/rzweb
 cd rzweb
 npm install
-npm run dev        # http://localhost:3000
+npm run dev
 ```
 
-## Before you open a PR
+http://localhost:3000
 
-All three must pass — CI enforces them and the bar is **zero warnings**:
+## Before a PR
+
+CI wants zero warnings.
 
 ```bash
-npm run lint        # eslint, 0 warnings
-npm run typecheck   # tsc --noEmit
-npm run build       # tsc -b && vite build
+npm run lint
+npm run typecheck
+npm run build
 ```
 
-Please also:
+Click through UI changes in the running app. Keep the diff to the thing you came to change. No dead code, no leaked listeners, no `any`. Match the surrounding style.
 
-- **Manually verify** UI changes in the running app (`npm run dev`).
-- Keep diffs focused; avoid unrelated churn.
-- No dead code, no leaked listeners/observers/object URLs, no `any`.
-- Match the surrounding code style (naming, comment density, idioms).
+## Commits and PRs
 
-## Commit & PR conventions
+Imperative subjects. `Fix hex view scroll sync` is the shape. Close issues with `Closes #123`. Fill the PR template.
 
-- Write clear, imperative commit subjects (e.g. `Fix hex view scroll sync`).
-- Reference issues you close (`Closes #123`).
-- Fill out the PR template checklist.
+## Security
 
-## Reporting security issues
-
-Please do **not** file public issues for vulnerabilities — see
-[SECURITY.md](SECURITY.md).
+Do not file public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-By contributing, you agree your contributions are licensed under the same
-license as this repository (see [LICENSE](LICENSE)).
+Patches use the same license as the repo. See [LICENSE](LICENSE).
