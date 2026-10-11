@@ -137,3 +137,7 @@ Built by [IndAlok](https://github.com/IndAlok). Powered by [Rizin](https://rizin
 
 
 This project is tested with BrowserStack.
+
+## License
+
+License: LGPL-3.0
