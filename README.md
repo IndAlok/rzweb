@@ -134,3 +134,6 @@ npm run dev
 [Telegram](https://telegram.dog/rizinweb)
 
 Built by [IndAlok](https://github.com/IndAlok). Powered by [Rizin](https://rizin.re).
+
+
+This project is tested with BrowserStack.
