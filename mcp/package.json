@@ -13,11 +13,11 @@
     "start:http": "node dist/index.js --http 8788"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^24.5.2",
+    "@types/node": "^24.19.0",
     "typescript": "^5.9.2"
   },
   "engines": {
