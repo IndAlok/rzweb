@@ -51,4 +51,4 @@ Do not file public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-Patches use the same license as the repo. See [LICENSE](LICENSE).
+Patches use the same license as the repo. See [COPYING.LESSER](COPYING.LESSER).

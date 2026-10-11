@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Browser-based reverse engineering interface for Rizin",
+  "license": "LGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
