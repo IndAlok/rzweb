@@ -1,0 +1,65 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "owner",
+    "name": "Alok Kumar Mishra",
+    "email": "alok16022006@gmail.com",
+    "description": "I'm a security-focused open source developer from India and a core maintainer of the Rizin reverse engineering framework. I built rz-frida during Google Summer of Code 2026 and founded RzWeb, which brings Rizin to the browser through WebAssembly. I'm a student at IIIT Jabalpur, and funding lets me keep maintaining these projects instead of dropping them for paid work.",
+    "webpageUrl": {
+      "url": "https://indalok.github.io"
+    }
+  },
+  "projects": [
+    {
+      "guid": "rzweb",
+      "name": "RzWeb",
+      "description": "RzWeb is a browser-based reverse engineering platform that runs the Rizin framework entirely client-side via WebAssembly. Drop in a binary and get disassembly, a decompiler view, control flow graphs, cross-references, hex view and a Rizin terminal, with nothing to install and no data leaving the machine. Analysis contexts persist in IndexedDB, and an MCP server exposes the same WASM engine to AI tools. It's used by students, CTF players and security researchers who can't install or pay for desktop RE tools. 762 GitHub stars and 73 forks since January 2026, live at rizin.pages.dev.",
+      "webpageUrl": {
+        "url": "https://rizin.pages.dev",
+        "wellKnown": "https://rizin.pages.dev/.well-known/funding-manifest-urls"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/IndAlok/rzweb"
+      },
+      "licenses": [
+        "spdx:LGPL-3.0-only"
+      ],
+      "tags": [
+        "reverse-engineering",
+        "security",
+        "webassembly",
+        "binary-analysis",
+        "developer-tools",
+        "malware-analysis",
+        "mcp",
+        "rizin"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "github-sponsors",
+        "type": "payment-provider",
+        "address": "https://github.com/sponsors/IndAlok",
+        "description": "GitHub Sponsors."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "maintenance-2027",
+        "status": "active",
+        "name": "RzWeb maintenance for 2027",
+        "description": "One year of part-time maintenance: keeping the WebAssembly build in sync with upstream Rizin releases, fixing browser-specific bugs, hardening the MCP server, adding decompiler support to the WASM build, and covering hosting and CI.",
+        "amount": 10000,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "github-sponsors"
+        ]
+      }
+    ]
+  }
+}
