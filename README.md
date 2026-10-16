@@ -24,7 +24,6 @@ An MCP server lives in [`mcp/`](mcp/). Same wasm, contexts on disk. Point any MC
 
 ## Featured in
 
-- [Hacker News](https://news.ycombinator.com/item?id=46699468), 21 Jan 2026
 - [The Hacker News weekly recap](https://thehackernews.com/2026/01/weekly-recap-firewall-flaws-ai-built.html#-cybersecurity-tools), January 2026, in Cybersecurity Tools
 - [Programmer Weekly issue 284](https://www.programmerweekly.com/p/programmer-weekly-issue-284-january-22-2026), 22 Jan 2026, in Tools
 
