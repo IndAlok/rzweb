@@ -6,6 +6,14 @@
   </a>
 </p>
 
+<p align="center"><b>Supported by</b></p>
+
+<p align="center">
+  <a href="https://www.browserstack.com/open-source"><img src="https://img.shields.io/badge/Tested%20with-BrowserStack-F37D2A?style=flat-square&logo=browserstack&logoColor=white" alt="BrowserStack"></a>
+  <a href="https://sentry.io/for/open-source/"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?style=flat-square&logo=sentry&logoColor=white" alt="Sentry"></a>
+  <a href="https://www.mintlify.com/oss-program"><img src="https://img.shields.io/badge/Mintlify-OSS%20Program-0D9373?style=flat-square&logo=mintlify&logoColor=white" alt="Mintlify OSS Program"></a>
+</p>
+
 RzWeb is a browser UI for [Rizin](https://rizin.re) compiled to WebAssembly. You drop a binary in. Analysis stays on this machine. Rizin runs in a Web Worker so the page does not freeze while WASM loads. `aaa` still owns that worker until the command returns.
 
 Each open binary is a context. Artifact bytes, a current `.rzdb`, and a short revision history live in IndexedDB. Home can resume a hash or start a new context on the same file. One tab is one worker. Close the tab and that core dies.
@@ -13,6 +21,13 @@ Each open binary is a context. Artifact bytes, a current `.rzdb`, and a short re
 The WASM build comes from [rzwasi](https://github.com/IndAlok/rzwasi). Stock Pages WASM has no jsdec or rz-ghidra. Decompiler view uses `pdg`, `pdd`, or `pdc` when the build ships one, otherwise `pdf` with `asm.pseudo`.
 
 An MCP server lives in [`mcp/`](mcp/). Same wasm, contexts on disk. Point any MCP client at it. See that folder.
+
+## Featured in
+
+- [The Hacker News weekly recap](https://thehackernews.com/2026/01/weekly-recap-firewall-flaws-ai-built.html#-cybersecurity-tools), January 2026, in Cybersecurity Tools
+- [Programmer Weekly issue 284](https://www.programmerweekly.com/p/programmer-weekly-issue-284-january-22-2026), 22 Jan 2026, in Tools
+
+<a href="https://trendshift.io/repositories/20765" target="_blank"><img src="https://trendshift.io/api/badge/trendshift/repositories/20765/daily?language=TypeScript" alt="IndAlok%2Frzweb | Trendshift" width="250" height="55"/></a>
 
 ## Screenshots
 
