@@ -6,6 +6,7 @@ Please report security vulnerabilities **privately** — do not open a public
 issue.
 
 - Use [GitHub private vulnerability reporting](https://github.com/IndAlok/rzweb/security/advisories/new), or
+- Email alok16022006@gmail.com, or
 - Reach a maintainer via the [Telegram community](https://telegram.dog/rizinweb).
 
 We aim to acknowledge reports within a few days and will keep you updated on a
