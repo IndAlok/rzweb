@@ -403,6 +403,12 @@ export default function HomePage() {
               Rizin
             </a>
           </span>
+          <span className="text-border">|</span>
+          <span>
+            <a href="https://snyk.io" target="_blank" rel="noopener noreferrer" className="hover:text-primary">
+              Secured with Snyk
+            </a>
+          </span>
         </div>
       </footer>
     </div>
