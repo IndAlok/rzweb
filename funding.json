@@ -45,6 +45,12 @@
         "type": "payment-provider",
         "address": "https://github.com/sponsors/IndAlok",
         "description": "GitHub Sponsors."
+      },
+      {
+        "guid": "bank-in",
+        "type": "bank",
+        "address": "",
+        "description": "Direct bank transfer to my Indian bank account (INR). Details on request by email."
       }
     ],
     "plans": [
@@ -58,6 +64,54 @@
         "frequency": "one-time",
         "channels": [
           "github-sponsors"
+        ]
+      },
+      {
+        "guid": "fu-m1-upstream-sync",
+        "status": "active",
+        "name": "FOSS United milestone 1 (Jan to Mar 2027): upstream sync and versioned WASM releases",
+        "description": "rzwasi CI rebuilds rizin.js and rizin.wasm for every Rizin release tag and publishes versioned builds, so RzWeb can pin and roll back a Rizin version. Fix the licence detection on the rzwasi repo. Done when rizin.pages.dev runs the latest Rizin release from a versioned build and the steps are documented. If another grant ends up paying for the same work, I will lower this ask and say so.",
+        "amount": 125000,
+        "currency": "INR",
+        "frequency": "one-time",
+        "channels": [
+          "bank-in"
+        ]
+      },
+      {
+        "guid": "fu-m2-browser-tests",
+        "status": "active",
+        "name": "FOSS United milestone 2 (Apr to Jun 2027): automated browser tests",
+        "description": "Today Vitest cannot load rizin.wasm, so releases depend on a manual click-through list in the README. Turn that list (two tabs, cold RZWEBPRJ open, history restore, cancel between aa and aaa, missing apply-project notice) into headless browser tests in CI against the real wasm, plus open-and-analyse smoke tests for ELF, PE and Mach-O samples. If another grant ends up paying for the same work, I will lower this ask and say so.",
+        "amount": 125000,
+        "currency": "INR",
+        "frequency": "one-time",
+        "channels": [
+          "bank-in"
+        ]
+      },
+      {
+        "guid": "fu-m3-decompiler",
+        "status": "active",
+        "name": "FOSS United milestone 3 (Jul to Sep 2027): decompiler in the default build",
+        "description": "The jsdec decompiler build in rzwasi is opt-in and experimental, so the public site falls back to pdf with asm.pseudo. Make the jsdec build stable, keep wasm size and load time in check, and ship pdd on rizin.pages.dev. Test whether rz-ghidra can be built for the browser and publish the result. If another grant ends up paying for the same work, I will lower this ask and say so.",
+        "amount": 125000,
+        "currency": "INR",
+        "frequency": "one-time",
+        "channels": [
+          "bank-in"
+        ]
+      },
+      {
+        "guid": "fu-m4-mcp-release",
+        "status": "active",
+        "name": "FOSS United milestone 4 (Oct to Dec 2027): MCP server release and hardening",
+        "description": "Publish the RzWeb MCP server (mcp/) to npm with versioned releases. Add input checks for context ids and paths, keep the HTTP mode on loopback with an optional token, add tests and setup docs. Run one workshop or talk for student security clubs on browser-based reverse engineering. If another grant ends up paying for the same work, I will lower this ask and say so.",
+        "amount": 125000,
+        "currency": "INR",
+        "frequency": "one-time",
+        "channels": [
+          "bank-in"
         ]
       }
     ]
