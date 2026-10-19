@@ -13,6 +13,7 @@
   <a href="https://sentry.io/for/open-source/"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?style=flat-square&logo=sentry&logoColor=white" alt="Sentry"></a>
   <a href="https://www.mintlify.com/oss-program"><img src="https://img.shields.io/badge/Mintlify-OSS%20Program-0D9373?style=flat-square&logo=mintlify&logoColor=white" alt="Mintlify OSS Program"></a>
   <a href="https://snyk.io/open-source/"><img src="https://img.shields.io/badge/Secured%20with-Snyk-4C4A73?style=flat-square&logo=snyk&logoColor=white" alt="Snyk"></a>
+  <a href="https://app.ona.com/#https://github.com/IndAlok/rzweb"><img src="https://ona.com/build-with-ona.svg" alt="Build with Ona"></a>
 </p>
 
 RzWeb is a browser UI for [Rizin](https://rizin.re) compiled to WebAssembly. You drop a binary in. Analysis stays on this machine. Rizin runs in a Web Worker so the page does not freeze while WASM loads. `aaa` still owns that worker until the command returns.
